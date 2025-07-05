@@ -1,0 +1,19 @@
+[package]
+name = "guaritos"
+version = "1.0.0"
+authors = []
+
+[addresses]
+guaritos = "0x28"
+
+[dev-addresses]
+
+[dependencies.AptosFramework]
+git = "https://github.com/aptos-labs/aptos-framework.git"
+rev = "mainnet"
+subdir = "aptos-framework"
+
+[dependencies.AptosToken]
+git = "https://github.com/aptos-labs/aptos-framework.git"
+rev = "mainnet"
+subdir = "aptos-token"

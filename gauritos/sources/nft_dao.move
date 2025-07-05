@@ -114,6 +114,26 @@ module guaritos::nft_dao {
     const PROPOSAL_RESOLVED_BY_ADMIN: u8 = 3;
     const PROPOSAL_VETOED_BY_ADMIN: u8 = 4;
 
+    /// Constants that represent the different function names 
+    /// that can be executed in a proposal. These correspond 
+    /// to specific actions allowed by the DAO logic.
+
+    /// No operation — used for testing, placeholder, or proposals that don't execute anything
+    const FUNCTION_NO_OP: String = "no_op";
+
+    /// Transfer fund — used to propose transferring APT or other tokens from DAO treasury
+    const FUNCTION_TRANSFER_FUND: String = "transfer_fund";
+
+    /// Offer NFT — used to propose sending an NFT (e.g. badge, credential) from DAO
+    const FUNCTION_OFFER_NFT: String = "offer_nft";
+
+    /// Add to blacklist — used to propose flagging a suspicious or malicious address
+    const FUNCTION_ADD_TO_BLACKLIST: String = "add_to_blacklist";
+
+    /// Remove from blacklist — used to propose unflagging a previously blacklisted address
+    const FUNCTION_REMOVE_FROM_BLACKLIST: String = "remove_from_blacklist";
+    
+
     /// The core struct that contains details and configurations of the DAO.
     struct DAO has key {
         /// Name of the DAO
