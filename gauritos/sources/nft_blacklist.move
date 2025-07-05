@@ -1,44 +1,56 @@
-module dao_address::nft_blacklist {
+/// This module defines a system for issuing NFT-based blacklists.
+/// Each account can create its own NFT collection to flag addresses
+/// considered malicious or risky.
+///
+/// NFTs are uniquely minted per blacklisted address, using a consistent
+/// naming convention (e.g., "Blacklist: 0xabc...") and stored in the
+/// collection created by the caller.
+///
+/// Key features:
+/// - Each admin/project can maintain their own blacklist collection
+/// - One NFT per flagged address (non-fungible, unique)
+/// - Useful for decentralized reputation systems and governance-based trust
+module guaritos::nft_blacklist {
     use std::signer;
     use std::string::{Self, String};
     use std::option::{Self, Option};
     use std::vector;
     use aptos_framework::account;
     use aptos_framework::event;
-    use aptos_token_objects::collection;
-    use aptos_token_objects::token;
-    use aptos_token_objects::property_map;
+    use aptos_token::collection;
+    use aptos_token::token;
+    use aptos_token::property_map;
 
-    /// Lỗi khi NFT đã tồn tại
+    /// Error when NFT already exists
     const E_NFT_ALREADY_EXISTS: u64 = 1;
-    /// Lỗi khi không có quyền truy cập
+    /// Error when no access permission
     const E_NO_ACCESS: u64 = 2;
-    /// Lỗi khi NFT không tồn tại
+    /// Error when NFT does not exist
     const E_NFT_NOT_EXISTS: u64 = 3;
-    /// Lỗi khi địa chỉ đã có trong blacklist
+    /// Error when address is already blacklisted
     const E_ADDRESS_ALREADY_BLACKLISTED: u64 = 4;
-    /// Lỗi khi địa chỉ không có trong blacklist
+    /// Error when address is not blacklisted
     const E_ADDRESS_NOT_BLACKLISTED: u64 = 5;
 
-    /// Tên collection cho NFT Blacklist
+    /// Collection name for NFT Blacklist
     const COLLECTION_NAME: vector<u8> = b"DAO Blacklist NFT";
     const COLLECTION_DESCRIPTION: vector<u8> = b"Unique NFT for DAO blacklist management";
     const TOKEN_NAME: vector<u8> = b"Blacklist Authority";
     const TOKEN_DESCRIPTION: vector<u8> = b"Authority token for managing DAO blacklist";
 
-    /// Struct lưu trữ thông tin NFT Blacklist
+    /// Struct for storing NFT Blacklist information
     struct BlacklistNFT has key {
-        /// Địa chỉ sở hữu NFT
+        /// Address that owns the NFT
         owner: address,
-        /// Danh sách blacklist
+        /// Blacklist addresses
         blacklisted_addresses: vector<address>,
-        /// Token object của NFT
+        /// Token object of the NFT
         token_address: address,
-        /// Signer capability để quản lý collection
+        /// Signer capability to manage collection
         signer_cap: account::SignerCapability,
     }
 
-    /// Event khi NFT được tạo
+    /// Event when NFT is created
     #[event]
     struct NFTCreated has drop, store {
         owner: address,
@@ -46,7 +58,7 @@ module dao_address::nft_blacklist {
         timestamp: u64,
     }
 
-    /// Event khi địa chỉ được thêm vào blacklist
+    /// Event when address is added to blacklist
     #[event]
     struct AddressBlacklisted has drop, store {
         blacklisted_address: address,
@@ -54,7 +66,7 @@ module dao_address::nft_blacklist {
         timestamp: u64,
     }
 
-    /// Event khi địa chỉ được xóa khỏi blacklist
+    /// Event when address is removed from blacklist
     #[event]
     struct AddressUnblacklisted has drop, store {
         unblacklisted_address: address,
@@ -62,7 +74,7 @@ module dao_address::nft_blacklist {
         timestamp: u64,
     }
 
-    /// Event khi NFT được transfer
+    /// Event when NFT is transferred
     #[event]
     struct NFTTransferred has drop, store {
         from: address,
@@ -70,12 +82,12 @@ module dao_address::nft_blacklist {
         timestamp: u64,
     }
 
-    /// Khởi tạo module (chỉ gọi 1 lần)
+    /// Initialize module (only called once)
     fun init_module(dao: &signer) {
-        // Tạo resource account để quản lý collection
+        // Create resource account to manage collection
         let (resource_signer, signer_cap) = account::create_resource_account(dao, b"nft_blacklist_seed");
         
-        // Tạo collection
+        // Create collection
         collection::create_unlimited_collection(
             &resource_signer,
             string::utf8(COLLECTION_DESCRIPTION),
@@ -84,27 +96,27 @@ module dao_address::nft_blacklist {
             string::utf8(b"https://dao.example.com")
         );
 
-        // Lưu signer capability
+        // Store signer capability
         move_to(dao, BlacklistNFT {
-            owner: @0x0, // Chưa có owner
+            owner: @0x0, // No owner yet
             blacklisted_addresses: vector::empty(),
-            token_address: @0x0, // Chưa có token
+            token_address: @0x0, // No token yet
             signer_cap,
         });
     }
 
-    /// Tạo NFT Blacklist duy nhất (chỉ gọi được 1 lần)
+    /// Create unique NFT Blacklist (can only be called once)
     public entry fun create_blacklist_nft(creator: &signer) acquires BlacklistNFT {
         let creator_addr = signer::address_of(creator);
         
-        // Kiểm tra NFT đã tồn tại chưa
+        // Check if NFT already exists
         let blacklist_nft = borrow_global_mut<BlacklistNFT>(@dao_address);
         assert!(blacklist_nft.owner == @0x0, E_NFT_ALREADY_EXISTS);
 
-        // Tạo resource signer
+        // Create resource signer
         let resource_signer = account::create_signer_with_capability(&blacklist_nft.signer_cap);
 
-        // Tạo token
+        // Create token
         let token_constructor_ref = token::create_named_token(
             &resource_signer,
             string::utf8(COLLECTION_NAME),
@@ -114,17 +126,17 @@ module dao_address::nft_blacklist {
             string::utf8(b"https://dao.example.com/blacklist-nft")
         );
 
-        // Lấy địa chỉ token
+        // Get token address
         let token_address = token::address_from_constructor_ref(&token_constructor_ref);
 
-        // Tạo transfer ref để có thể transfer token
+        // Create transfer ref to enable token transfer
         let transfer_ref = token::generate_transfer_ref(&token_constructor_ref);
         
-        // Transfer token cho creator
+        // Transfer token to creator
         let linear_transfer_ref = token::generate_linear_transfer_ref(&transfer_ref);
         token::transfer_with_ref(linear_transfer_ref, creator_addr);
 
-        // Cập nhật thông tin NFT
+        // Update NFT information
         blacklist_nft.owner = creator_addr;
         blacklist_nft.token_address = token_address;
 
@@ -136,18 +148,18 @@ module dao_address::nft_blacklist {
         });
     }
 
-    /// Thêm địa chỉ vào blacklist (chỉ owner NFT mới gọi được)
+    /// Add address to blacklist (only NFT owner can call)
     public entry fun add_to_blacklist(owner: &signer, address_to_blacklist: address) acquires BlacklistNFT {
         let owner_addr = signer::address_of(owner);
         let blacklist_nft = borrow_global_mut<BlacklistNFT>(@dao_address);
         
-        // Kiểm tra quyền sở hữu
+        // Check ownership
         assert!(blacklist_nft.owner == owner_addr, E_NO_ACCESS);
         
-        // Kiểm tra địa chỉ đã có trong blacklist chưa
+        // Check if address is already in blacklist
         assert!(!vector::contains(&blacklist_nft.blacklisted_addresses, &address_to_blacklist), E_ADDRESS_ALREADY_BLACKLISTED);
         
-        // Thêm vào blacklist
+        // Add to blacklist
         vector::push_back(&mut blacklist_nft.blacklisted_addresses, address_to_blacklist);
 
         // Emit event
@@ -158,15 +170,15 @@ module dao_address::nft_blacklist {
         });
     }
 
-    /// Xóa địa chỉ khỏi blacklist (chỉ owner NFT mới gọi được)
+    /// Remove address from blacklist (only NFT owner can call)
     public entry fun remove_from_blacklist(owner: &signer, address_to_remove: address) acquires BlacklistNFT {
         let owner_addr = signer::address_of(owner);
         let blacklist_nft = borrow_global_mut<BlacklistNFT>(@dao_address);
         
-        // Kiểm tra quyền sở hữu
+        // Check ownership
         assert!(blacklist_nft.owner == owner_addr, E_NO_ACCESS);
         
-        // Tìm và xóa địa chỉ khỏi blacklist
+        // Find and remove address from blacklist
         let (found, index) = vector::index_of(&blacklist_nft.blacklisted_addresses, &address_to_remove);
         assert!(found, E_ADDRESS_NOT_BLACKLISTED);
         
@@ -180,16 +192,16 @@ module dao_address::nft_blacklist {
         });
     }
 
-    /// Transfer NFT sang owner mới
+    /// Transfer NFT to new owner
     public entry fun transfer_nft(current_owner: &signer, new_owner: address) acquires BlacklistNFT {
         let current_owner_addr = signer::address_of(current_owner);
         let blacklist_nft = borrow_global_mut<BlacklistNFT>(@dao_address);
         
-        // Kiểm tra quyền sở hữu
+        // Check ownership
         assert!(blacklist_nft.owner == current_owner_addr, E_NO_ACCESS);
         
-        // Transfer token (cần implement token transfer logic)
-        // Cập nhật owner
+        // Transfer token (need to implement token transfer logic)
+        // Update owner
         blacklist_nft.owner = new_owner;
 
         // Emit event
@@ -200,42 +212,42 @@ module dao_address::nft_blacklist {
         });
     }
 
-    /// Kiểm tra địa chỉ có trong blacklist không
+    /// Check if address is in blacklist
     #[view]
     public fun is_blacklisted(address_to_check: address): bool acquires BlacklistNFT {
         let blacklist_nft = borrow_global<BlacklistNFT>(@dao_address);
         vector::contains(&blacklist_nft.blacklisted_addresses, &address_to_check)
     }
 
-    /// Lấy owner hiện tại của NFT
+    /// Get current owner of NFT
     #[view]
     public fun get_owner(): address acquires BlacklistNFT {
         let blacklist_nft = borrow_global<BlacklistNFT>(@dao_address);
         blacklist_nft.owner
     }
 
-    /// Lấy địa chỉ token NFT
+    /// Get NFT token address
     #[view]
     public fun get_token_address(): address acquires BlacklistNFT {
         let blacklist_nft = borrow_global<BlacklistNFT>(@dao_address);
         blacklist_nft.token_address
     }
 
-    /// Lấy danh sách blacklist
+    /// Get blacklist addresses
     #[view]
     public fun get_blacklisted_addresses(): vector<address> acquires BlacklistNFT {
         let blacklist_nft = borrow_global<BlacklistNFT>(@dao_address);
         blacklist_nft.blacklisted_addresses
     }
 
-    /// Kiểm tra NFT đã được tạo chưa
+    /// Check if NFT has been created
     #[view]
     public fun nft_exists(): bool acquires BlacklistNFT {
         let blacklist_nft = borrow_global<BlacklistNFT>(@dao_address);
         blacklist_nft.owner != @0x0
     }
 
-    /// Lấy số lượng địa chỉ trong blacklist
+    /// Get number of addresses in blacklist
     #[view]
     public fun get_blacklist_count(): u64 acquires BlacklistNFT {
         let blacklist_nft = borrow_global<BlacklistNFT>(@dao_address);

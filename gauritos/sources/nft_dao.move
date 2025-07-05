@@ -119,19 +119,19 @@ module guaritos::nft_dao {
     /// to specific actions allowed by the DAO logic.
 
     /// No operation — used for testing, placeholder, or proposals that don't execute anything
-    const FUNCTION_NO_OP: String = "no_op";
+    const FUNCTION_NO_OP: vector<u8> = b"no_op";
 
     /// Transfer fund — used to propose transferring APT or other tokens from DAO treasury
-    const FUNCTION_TRANSFER_FUND: String = "transfer_fund";
+    const FUNCTION_TRANSFER_FUND: vector<u8> = b"transfer_fund";
 
     /// Offer NFT — used to propose sending an NFT (e.g. badge, credential) from DAO
-    const FUNCTION_OFFER_NFT: String = "offer_nft";
+    const FUNCTION_OFFER_NFT: vector<u8> = b"offer_nft";
 
     /// Add to blacklist — used to propose flagging a suspicious or malicious address
-    const FUNCTION_ADD_TO_BLACKLIST: String = "add_to_blacklist";
+    const FUNCTION_ADD_TO_BLACKLIST: vector<u8> = b"add_to_blacklist";
 
     /// Remove from blacklist — used to propose unflagging a previously blacklisted address
-    const FUNCTION_REMOVE_FROM_BLACKLIST: String = "remove_from_blacklist";
+    const FUNCTION_REMOVE_FROM_BLACKLIST: vector<u8> = b"remove_from_blacklist";
     
 
     /// The core struct that contains details and configurations of the DAO.
