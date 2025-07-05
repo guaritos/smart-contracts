@@ -210,8 +210,10 @@ module guaritos::nft_blacklist {
         let blacklist_nft = borrow_global_mut<BlacklistNFT>(@dao_address);
         
         // Check ownership
+        // Check ownership
         assert!(blacklist_nft.owner == owner_addr, E_NO_ACCESS);
         
+        // Find and remove address from blacklist
         // Find and remove address from blacklist
         let (found, index) = vector::index_of(&blacklist_nft.blacklisted_addresses, &address_to_remove);
         assert!(found, E_ADDRESS_NOT_BLACKLISTED);
@@ -227,13 +229,17 @@ module guaritos::nft_blacklist {
     }
 
     /// Transfer NFT to new owner
+    /// Transfer NFT to new owner
     public entry fun transfer_nft(current_owner: &signer, new_owner: address) acquires BlacklistNFT {
         let current_owner_addr = signer::address_of(current_owner);
         let blacklist_nft = borrow_global_mut<BlacklistNFT>(@dao_address);
         
         // Check ownership
+        // Check ownership
         assert!(blacklist_nft.owner == current_owner_addr, E_NO_ACCESS);
         
+        // Transfer token (need to implement token transfer logic)
+        // Update owner
         // Transfer token (need to implement token transfer logic)
         // Update owner
         blacklist_nft.owner = new_owner;
@@ -247,12 +253,14 @@ module guaritos::nft_blacklist {
     }
 
     /// Check if address is in blacklist
+    /// Check if address is in blacklist
     #[view]
     public fun is_blacklisted(address_to_check: address): bool acquires BlacklistNFT {
         let blacklist_nft = borrow_global<BlacklistNFT>(@dao_address);
         vector::contains(&blacklist_nft.blacklisted_addresses, &address_to_check)
     }
 
+    /// Get current owner of NFT
     /// Get current owner of NFT
     #[view]
     public fun get_owner(): address acquires BlacklistNFT {
@@ -261,12 +269,14 @@ module guaritos::nft_blacklist {
     }
 
     /// Get NFT token address
+    /// Get NFT token address
     #[view]
     public fun get_token_address(): address acquires BlacklistNFT {
         let blacklist_nft = borrow_global<BlacklistNFT>(@dao_address);
         blacklist_nft.token_address
     }
 
+    /// Get blacklist addresses
     /// Get blacklist addresses
     #[view]
     public fun get_blacklisted_addresses(): vector<address> acquires BlacklistNFT {
@@ -275,12 +285,14 @@ module guaritos::nft_blacklist {
     }
 
     /// Check if NFT has been created
+    /// Check if NFT has been created
     #[view]
     public fun nft_exists(): bool acquires BlacklistNFT {
         let blacklist_nft = borrow_global<BlacklistNFT>(@dao_address);
         blacklist_nft.owner != @0x0
     }
 
+    /// Get number of addresses in blacklist
     /// Get number of addresses in blacklist
     #[view]
     public fun get_blacklist_count(): u64 acquires BlacklistNFT {
