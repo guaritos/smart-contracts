@@ -43,6 +43,21 @@ module guaritos::nft_blacklist {
     /// Metadata constants for the default NFT Blacklist collection managed by the DAO
     const DAO_TOKEN_NAME: vector<u8> = b"Guaritos Blacklist";
     const DAO_TOKEN_DESCRIPTION: vector<u8> = b"Unique NFT collection for Guaritos DAO blacklist management";
+
+    /// Resource account seed for creating the blacklist registry
+    const RESOURCE_ACCOUNT_SEED: vector<u8> = b"nft_blacklist_seed";
+
+    /// Base URI for the collection
+    const BASE_URI: vector<u8> = b"https://guaritos.vercel.app";
+
+    /// NFT URI for individual tokens
+    const NFT_URI: vector<u8> = b"https://guaritos.vercel.app/blacklist-nft";
+
+    /// Initial count value
+    const INITIAL_COUNT: u64 = 0;
+
+    /// Count increment value
+    const COUNT_INCREMENT: u64 = 1;
     
     /// Struct for storing NFT Blacklist information
     struct Blacklist has key {
@@ -66,12 +81,12 @@ module guaritos::nft_blacklist {
 
     /// Initialize module (only called once)
     fun init_module(dao: &signer) {
-        let (resource_signer, signer_cap) = create_resource_account(dao, b"nft_blacklist_seed");
+        let (resource_signer, signer_cap) = create_resource_account(dao, RESOURCE_ACCOUNT_SEED);
         
         let registry = BlacklistRegistry {
             signer_cap,
             collection_created: true,
-            count: 0,
+            count: INITIAL_COUNT,
         };
 
         let dao_blacklist_collection_constructor_ref = create_unlimited_collection(
@@ -79,7 +94,7 @@ module guaritos::nft_blacklist {
             string::utf8(COLLECTION_DESCRIPTION),
             string::utf8(COLLECTION_NAME),
             option::none(),
-            string::utf8(b"https://guaritos.vercel.app")
+            string::utf8(BASE_URI)
         );
 
         let dao_blacklist_collection_address = address_from_constructor_ref(&dao_blacklist_collection_constructor_ref);
@@ -95,7 +110,7 @@ module guaritos::nft_blacklist {
             string::utf8(DAO_TOKEN_DESCRIPTION),
             string::utf8(DAO_TOKEN_NAME),
             option::none(),
-            string::utf8(b"https://guaritos.vercel.app/blacklist-nft")
+            string::utf8(NFT_URI)
         );
 
         let token_address = address_from_constructor_ref(&dao_blacklist_constructor_ref);
@@ -103,7 +118,7 @@ module guaritos::nft_blacklist {
         let linear_transfer_ref = generate_linear_transfer_ref(&transfer_ref);
         transfer_with_ref(linear_transfer_ref, signer::address_of(dao));
 
-        registry.count = registry.count + 1;
+        registry.count = registry.count + COUNT_INCREMENT;
         
         move_to(dao, Blacklist {
             owner: signer::address_of(dao),
@@ -124,7 +139,7 @@ module guaritos::nft_blacklist {
                 string::utf8(COLLECTION_DESCRIPTION),
                 string::utf8(COLLECTION_NAME),
                 option::none(),
-                string::utf8(b"https://guaritos.vercel.app")
+                string::utf8(BASE_URI)
             );
 
             registry.collection_created = true;
@@ -149,7 +164,7 @@ module guaritos::nft_blacklist {
             string::utf8(TOKEN_DESCRIPTION),
             string::utf8(TOKEN_NAME),
             option::none(),
-            string::utf8(b"https://guaritos.vercel.app/blacklist-nft")
+            string::utf8(NFT_URI)
         );
 
         let token_address = address_from_constructor_ref(&token_constructor_ref);
@@ -261,10 +276,10 @@ module guaritos::nft_blacklist {
         init_module(dao);
         
         let creator_addr = signer::address_of(creator);
-        assert!(!exists<Blacklist>(creator_addr), 0);
-        assert!(!nft_exists(creator_addr), 1);
+        assert!(!exists<Blacklist>(creator_addr), INITIAL_COUNT);
+        assert!(!nft_exists(creator_addr), COUNT_INCREMENT);
         assert!(exists<BlacklistRegistry>(signer::address_of(dao)), 2);
-        assert!(borrow_global<BlacklistRegistry>(signer::address_of(dao)).count == 1, 3);
+        assert!(borrow_global<BlacklistRegistry>(signer::address_of(dao)).count == COUNT_INCREMENT, 3);
     }
 
     #[test(dao = @0x1, creator = @0x123)]
@@ -276,8 +291,8 @@ module guaritos::nft_blacklist {
         
         let blacklist = borrow_global<Blacklist>(creator_addr);
         
-        assert!(nft_exists(creator_addr), 0);
-        assert!(blacklist.owner == creator_addr, 1);
+        assert!(nft_exists(creator_addr), INITIAL_COUNT);
+        assert!(blacklist.owner == creator_addr, COUNT_INCREMENT);
     }
 
     #[test(dao = @0x1, creator = @0x123)]
