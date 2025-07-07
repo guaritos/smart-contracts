@@ -243,36 +243,12 @@ module guaritos::nft_blacklist {
         blacklist_nft.addresses.contains(address)
     }
 
-    // /// Get NFT token address
-    // /// Get NFT token address
-    // #[view]
-    // public fun get_token_address(): address acquires Blacklist {
-    //     let blacklist_nft = borrow_global<Blacklist>(@guaritos);
-    //     blacklist_nft.token_address
-    // }
-
-    // /// Get blacklist addresses
-    // /// Get blacklist addresses
-    // #[view]
-    // public fun get_addresses(): vector<address> acquires Blacklist {
-    //     let blacklist_nft = borrow_global<Blacklist>(@guaritos);
-    //     blacklist_nft.addresses
-    // }
 
     /// Check if NFT has been created
     #[view]
     public fun nft_exists(owner: address): bool {
         exists<Blacklist>(owner)
     }
-
-    // /// Get number of addresses in blacklist
-    // /// Get number of addresses in blacklist
-    // #[view]
-    // public fun get_blacklist_count(): u64 acquires Blacklist {
-    //     let blacklist_nft = borrow_global<Blacklist>(@guaritos);
-        
-    //     blacklist_nft.addresses.length
-    // }
 
     #[test_only]
     use aptos_framework::timestamp;
@@ -321,21 +297,36 @@ module guaritos::nft_blacklist {
         init_module(dao);
     }
 
-    // #[test(dao = @guaritos, creator = @0x123)]
-    // fun test_blacklist_operations(dao: &signer, creator: &signer) acquires BlacklistRegistry {
-    //     setup_test(dao, creator);
-    //     create_blacklist(dao, creator);
-        
-    //     let address_to_blacklist = @0x456;
-        
-    //     // Test add to blacklist
-    //     // add_to_blacklist(creator, address_to_blacklist);
-    //     // assert!(is_blacklisted(address_to_blacklist), 0);
-    //     // assert!(get_blacklist_count() == 1, 1);
-        
-    //     // // Test remove from blacklist
-    //     // remove_from_blacklist(creator, address_to_blacklist);
-    //     // assert!(!is_blacklisted(address_to_blacklist), 2);
-    //     // assert!(get_blacklist_count() == 0, 3);
-    // }
+    #[test(dao = @0x1, creator = @0x123, target = @0x456)]
+    fun test_add_to_blacklist(dao: &signer, creator: &signer) acquires Blacklist, BlacklistRegistry {
+        let creator_addr = signer::address_of(creator);
+        let dao_addr = signer::address_of(dao);
+        let target_addr = @0x456;
+
+        setup_test(dao, creator);
+        create_blacklist(creator, dao_addr);
+
+        add_to_blacklist(creator, target_addr);
+
+        let blacklist = borrow_global<Blacklist>(creator_addr);        
+        assert!(blacklist.addresses.contains(target_addr), 1);
+        assert!(is_blacklisted(creator_addr, target_addr), 2);
+    }
+
+    #[test(dao = @0x1, creator = @0x123, target = @0x456)]
+    fun test_remove_from_blacklist(dao: &signer, creator: &signer) acquires Blacklist, BlacklistRegistry {
+        let creator_addr = signer::address_of(creator);
+        let dao_addr = signer::address_of(dao);
+        let target_addr = @0x456;
+
+        setup_test(dao, creator);
+        create_blacklist(creator, dao_addr);
+        add_to_blacklist(creator, target_addr);
+
+        remove_from_blacklist(creator, target_addr);
+
+        let blacklist = borrow_global<Blacklist>(creator_addr);        
+        assert!(!blacklist.addresses.contains(target_addr), 3);
+        assert!(!is_blacklisted(creator_addr, target_addr), 4);
+    }
 }
