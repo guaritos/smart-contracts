@@ -17,6 +17,7 @@ module guaritos::nft_blacklist {
     use std::option::{Self, Option};
     use std::object::{Self, address_from_constructor_ref, generate_transfer_ref, generate_linear_transfer_ref, transfer_with_ref};
     use std::vector;
+    use guaritos::nft_blacklist_events;
 
     /// Error when NFT already exists
     const ENFT_ALREADY_EXISTS: u64 = 1;
@@ -34,22 +35,21 @@ module guaritos::nft_blacklist {
     const EADDRESS_NOT_BLACKLISTED: u64 = 5;
 
     /// Collection name for NFT Blacklist
-    const COLLECTION_NAME: vector<u8> = b"Guaritos Blacklist NFT";
+    const COLLECTION_NAME: vector<u8> = b"Guaritos Blacklist Collection";
     const COLLECTION_DESCRIPTION: vector<u8> = b"Unique NFT for DAO blacklist management";
     const TOKEN_NAME: vector<u8> = b"Blacklist Authority";
     const TOKEN_DESCRIPTION: vector<u8> = b"Authority token for managing DAO blacklist";
 
-    /// Registry address for the NFT Blacklist
-    /// This will be changed to dao address in production
-    /// For now, we use a fixed address for testing purposes
-    const REGISTRY_ADDRESS: address = @0x1;
-
+    /// Metadata constants for the default NFT Blacklist collection managed by the DAO
+    const DAO_TOKEN_NAME: vector<u8> = b"Guaritos Blacklist";
+    const DAO_TOKEN_DESCRIPTION: vector<u8> = b"Unique NFT collection for Guaritos DAO blacklist management";
+    
     /// Struct for storing NFT Blacklist information
-    struct BlacklistNFT has key {
+    struct Blacklist has key {
         /// Address that owns the NFT
         owner: address,
         /// Blacklist addresses
-        blacklisted_addresses: Table<address, bool>,
+        addresses: Table<address, bool>,
         /// Token object of the NFT
         token_address: address,
     }
@@ -60,54 +60,62 @@ module guaritos::nft_blacklist {
         signer_cap: SignerCapability,
         /// Collection created flag
         collection_created: bool,
-    }
-
-    /// Event when NFT is created
-    #[event]
-    struct NFTCreated has drop, store {
-        owner: address,
-        token_address: address,
-        timestamp: u64,
-    }
-
-    /// Event when address is added to blacklist
-    #[event]
-    struct AddressBlacklisted has drop, store {
-        blacklisted_address: address,
-        owner: address,
-        timestamp: u64,
-    }
-
-    /// Event when address is removed from blacklist
-    #[event]
-    struct AddressUnblacklisted has drop, store {
-        unblacklisted_address: address,
-        owner: address,
-        timestamp: u64,
-    }
-
-    /// Event when NFT is transferred
-    #[event]
-    struct NFTTransferred has drop, store {
-        from: address,
-        to: address,
-        timestamp: u64,
+        /// Count of created blacklists
+        count: u64,
     }
 
     /// Initialize module (only called once)
     fun init_module(dao: &signer) {
         let (resource_signer, signer_cap) = create_resource_account(dao, b"nft_blacklist_seed");
         
-        move_to(dao, BlacklistRegistry {
+        let registry = BlacklistRegistry {
             signer_cap,
-            collection_created: false,
+            collection_created: true,
+            count: 0,
+        };
+
+        let dao_blacklist_collection_constructor_ref = create_unlimited_collection(
+            &resource_signer,
+            string::utf8(COLLECTION_DESCRIPTION),
+            string::utf8(COLLECTION_NAME),
+            option::none(),
+            string::utf8(b"https://guaritos.vercel.app")
+        );
+
+        let dao_blacklist_collection_address = address_from_constructor_ref(&dao_blacklist_collection_constructor_ref);
+        
+        let transfer_ref = generate_transfer_ref(&dao_blacklist_collection_constructor_ref);
+        let linear_transfer_ref = generate_linear_transfer_ref(&transfer_ref);
+        transfer_with_ref(linear_transfer_ref, signer::address_of(dao));
+
+        // Create first Blacklist NFT for the DAO
+        let dao_blacklist_constructor_ref = create_named_token(
+            &resource_signer,
+            string::utf8(COLLECTION_NAME),
+            string::utf8(DAO_TOKEN_DESCRIPTION),
+            string::utf8(DAO_TOKEN_NAME),
+            option::none(),
+            string::utf8(b"https://guaritos.vercel.app/blacklist-nft")
+        );
+
+        let token_address = address_from_constructor_ref(&dao_blacklist_constructor_ref);
+        let transfer_ref = generate_transfer_ref(&dao_blacklist_constructor_ref);
+        let linear_transfer_ref = generate_linear_transfer_ref(&transfer_ref);
+        transfer_with_ref(linear_transfer_ref, signer::address_of(dao));
+
+        registry.count = registry.count + 1;
+        
+        move_to(dao, Blacklist {
+            owner: signer::address_of(dao),
+            addresses: table::new<address, bool>(),
+            token_address,
         });
+
+        move_to(dao, registry);
     }
 
     /// Create the shared collection (can be called by anyone, but only once)
-    fun ensure_collection_exists() acquires BlacklistRegistry {
-        let registry = borrow_global_mut<BlacklistRegistry>(REGISTRY_ADDRESS);
-        
+    fun ensure_collection_exists(registry: &mut BlacklistRegistry) {
         if (!registry.collection_created) {
             let resource_signer = create_signer_with_capability(&registry.signer_cap);
             
@@ -118,20 +126,21 @@ module guaritos::nft_blacklist {
                 option::none(),
                 string::utf8(b"https://guaritos.vercel.app")
             );
-            
+
             registry.collection_created = true;
         }
     }
 
     /// Create unique NFT Blacklist for the caller
-    public entry fun create_blacklist_nft(creator: &signer) acquires BlacklistRegistry {
+    public entry fun create_blacklist(dao: &signer, creator: &signer) acquires BlacklistRegistry {
         let creator_addr = signer::address_of(creator);
+        let dao_addr = signer::address_of(dao);
+
+        assert!(!exists<Blacklist>(creator_addr), ENFT_ALREADY_EXISTS);
         
-        assert!(!exists<BlacklistNFT>(creator_addr), ENFT_ALREADY_EXISTS);
+        let registry = borrow_global_mut<BlacklistRegistry>(signer::address_of(dao));
+        ensure_collection_exists(registry);
         
-        ensure_collection_exists();
-        
-        let registry = borrow_global<BlacklistRegistry>(REGISTRY_ADDRESS);
         let resource_signer = create_signer_with_capability(&registry.signer_cap);
 
         let token_constructor_ref = create_named_token(
@@ -140,7 +149,7 @@ module guaritos::nft_blacklist {
             string::utf8(TOKEN_DESCRIPTION),
             string::utf8(TOKEN_NAME),
             option::none(),
-            string::utf8(b"https://dao.example.com/blacklist-nft")
+            string::utf8(b"https://guaritos.vercel.app/blacklist-nft")
         );
 
         let token_address = address_from_constructor_ref(&token_constructor_ref);
@@ -149,169 +158,147 @@ module guaritos::nft_blacklist {
 
         transfer_with_ref(linear_transfer_ref, creator_addr);
 
-        move_to(creator, BlacklistNFT {
+        move_to(creator, Blacklist {
             owner: creator_addr,
-            blacklisted_addresses: table::new<address, bool>(),
+            addresses: table::new<address, bool>(),
             token_address,
         });
 
-        event::emit(NFTCreated {
-            owner: creator_addr,
+        nft_blacklist_events::emit_nft_created_event(
+            creator_addr,
             token_address,
-            timestamp: aptos_framework::timestamp::now_microseconds(),
-        });
+            aptos_framework::timestamp::now_microseconds(),
+        );
     }
 
     /// Add address to blacklist (only NFT owner can call)
-    public entry fun add_to_blacklist(owner: &signer, address_to_blacklist: address) acquires BlacklistNFT {
+    public entry fun add_to_blacklist(owner: &signer, target: address) acquires Blacklist {
         let owner_addr = signer::address_of(owner);
 
-        assert!(exists<BlacklistNFT>(owner_addr), ENFT_NOT_EXISTS);
+        assert!(exists<Blacklist>(owner_addr), ENFT_NOT_EXISTS);
 
-        let blacklist_nft = borrow_global_mut<BlacklistNFT>(owner_addr);
+        let blacklist_nft = borrow_global_mut<Blacklist>(owner_addr);
         
         assert!(blacklist_nft.owner == owner_addr, ENO_ACCESS);
-        assert!(!blacklist_nft.blacklisted_addresses.contains(address_to_blacklist), EADDRESS_ALREADY_BLACKLISTED);
+        assert!(!blacklist_nft.addresses.contains(target), EADDRESS_ALREADY_BLACKLISTED);
         
-        blacklist_nft.blacklisted_addresses.add(address_to_blacklist, true);
+        blacklist_nft.addresses.add(target, true);
 
-        event::emit(AddressBlacklisted {
-            blacklisted_address: address_to_blacklist,
-            owner: owner_addr,
-            timestamp: aptos_framework::timestamp::now_microseconds(),
-        });
+        nft_blacklist_events::emit_address_blacklisted_event(
+            target,
+            owner_addr,
+            aptos_framework::timestamp::now_microseconds(),
+        );
     }
 
-    // /// Remove address from blacklist (only NFT owner can call)
-    // /// Remove address from blacklist (only NFT owner can call)
-    // public entry fun remove_from_blacklist(owner: &signer, address_to_remove: address) acquires BlacklistNFT {
-    //     let owner_addr = signer::address_of(owner);
-    //     let blacklist_nft = borrow_global_mut<BlacklistNFT>(@guaritos);
+    /// Remove address from blacklist (only NFT owner can call)
+    public entry fun remove_from_blacklist(owner: &signer, target: address) acquires Blacklist {
+        let owner_addr = signer::address_of(owner);
+        let blacklist_nft = borrow_global_mut<Blacklist>(owner_addr);
         
-    //     // Check ownership
-    //     // Check ownership
-    //     assert!(blacklist_nft.owner == owner_addr, ENO_ACCESS);
+        assert!(blacklist_nft.owner == owner_addr, ENO_ACCESS);
         
-    //     // Find and remove address from blacklist
-    //     // Find and remove address from blacklist
-    //     let (found, index) = vector::index_of(&blacklist_nft.blacklisted_addresses, &address_to_remove);
-    //     assert!(found, EADDRESS_NOT_BLACKLISTED);
+        let found= blacklist_nft.addresses.contains(target);
+        assert!(found, EADDRESS_NOT_BLACKLISTED);
         
-    //     vector::remove(&mut blacklist_nft.blacklisted_addresses, index);
+        blacklist_nft.addresses.remove(target);
 
-    //     // Emit event
-    //     event::emit(AddressUnblacklisted {
-    //         unblacklisted_address: address_to_remove,
-    //         owner: owner_addr,
-    //         timestamp: aptos_framework::timestamp::now_microseconds(),
-    //     });
-    // }
+        nft_blacklist_events::emit_address_unblacklisted_event(
+            target,
+            owner_addr,
+            aptos_framework::timestamp::now_microseconds(),
+        );
+    }
 
-    /// Transfer NFT to new owner
-    /// Transfer NFT to new owner
-    // public entry fun transfer_nft(current_owner: &signer, new_owner: address) acquires BlacklistNFT {
-    //     let current_owner_addr = signer::address_of(current_owner);
-    //     let blacklist_nft = borrow_global_mut<BlacklistNFT>(@guaritos);
+    //////////////////// All view functions ////////////////////////////////
+
+    /// Check if address is in blacklist
+    #[view]
+    public fun is_blacklisted(owner: address, address: address): bool acquires Blacklist {
+        let blacklist_nft = borrow_global<Blacklist>(owner);
+        assert!(exists<Blacklist>(owner), ENFT_NOT_EXISTS);
         
-    //     // Check ownership
-    //     // Check ownership
-    //     assert!(blacklist_nft.owner == current_owner_addr, ENO_ACCESS);
-        
-    //     // Transfer token (need to implement token transfer logic)
-    //     // Update owner
-    //     // Transfer token (need to implement token transfer logic)
-    //     // Update owner
-    //     blacklist_nft.owner = new_owner;
-
-    //     // Emit event
-    //     event::emit(NFTTransferred {
-    //         from: current_owner_addr,
-    //         to: new_owner,
-    //         timestamp: aptos_framework::timestamp::now_microseconds(),
-    //     });
-    // }
-
-    // /// Check if address is in blacklist
-    // /// Check if address is in blacklist
-    // #[view]
-    // public fun is_blacklisted(address_to_check: address): bool acquires BlacklistNFT {
-    //     let blacklist_nft = borrow_global<BlacklistNFT>(@guaritos);
-    //     vector::contains(&blacklist_nft.blacklisted_addresses, &address_to_check)
-    // }
-
-    // /// Get current owner of NFT
-    // /// Get current owner of NFT
-    // #[view]
-    // public fun get_owner(): address acquires BlacklistNFT {
-    //     let blacklist_nft = borrow_global<BlacklistNFT>(@guaritos);
-    //     blacklist_nft.owner
-    // }
+        blacklist_nft.addresses.contains(address)
+    }
 
     // /// Get NFT token address
     // /// Get NFT token address
     // #[view]
-    // public fun get_token_address(): address acquires BlacklistNFT {
-    //     let blacklist_nft = borrow_global<BlacklistNFT>(@guaritos);
+    // public fun get_token_address(): address acquires Blacklist {
+    //     let blacklist_nft = borrow_global<Blacklist>(@guaritos);
     //     blacklist_nft.token_address
     // }
 
     // /// Get blacklist addresses
     // /// Get blacklist addresses
     // #[view]
-    // public fun get_blacklisted_addresses(): vector<address> acquires BlacklistNFT {
-    //     let blacklist_nft = borrow_global<BlacklistNFT>(@guaritos);
-    //     blacklist_nft.blacklisted_addresses
+    // public fun get_addresses(): vector<address> acquires Blacklist {
+    //     let blacklist_nft = borrow_global<Blacklist>(@guaritos);
+    //     blacklist_nft.addresses
     // }
 
-    // /// Check if NFT has been created
-    // /// Check if NFT has been created
-    // #[view]
-    // public fun nft_exists(): bool acquires BlacklistNFT {
-    //     let blacklist_nft = borrow_global<BlacklistNFT>(@guaritos);
-    //     blacklist_nft.owner != @0x0
-    // }
+    /// Check if NFT has been created
+    #[view]
+    public fun nft_exists(owner: address): bool {
+        exists<Blacklist>(owner)
+    }
 
     // /// Get number of addresses in blacklist
     // /// Get number of addresses in blacklist
     // #[view]
-    // public fun get_blacklist_count(): u64 acquires BlacklistNFT {
-    //     let blacklist_nft = borrow_global<BlacklistNFT>(@guaritos);
+    // public fun get_blacklist_count(): u64 acquires Blacklist {
+    //     let blacklist_nft = borrow_global<Blacklist>(@guaritos);
         
-    //     blacklist_nft.blacklisted_addresses.length
+    //     blacklist_nft.addresses.length
     // }
 
     #[test_only]
     use aptos_framework::timestamp;
 
     #[test_only]
-    fun setup_test(dao: &signer, creator: &signer) {
+    fun setup_test(dao: &signer, creator: &signer) acquires BlacklistRegistry {
+        timestamp::set_time_has_started_for_testing(dao);
+        init_module(dao);
+        
+        let creator_addr = signer::address_of(creator);
+        assert!(!exists<Blacklist>(creator_addr), 0);
+        assert!(!nft_exists(creator_addr), 1);
+        assert!(exists<BlacklistRegistry>(signer::address_of(dao)), 2);
+        assert!(borrow_global<BlacklistRegistry>(signer::address_of(dao)).count == 1, 3);
+    }
+
+    #[test(dao = @0x1, creator = @0x123)]
+    fun test_create_nft_success(dao: &signer, creator: &signer) acquires BlacklistRegistry, Blacklist {
+        let creator_addr = signer::address_of(creator);
+        setup_test(dao, creator);
+        
+        create_blacklist(dao, creator);
+        
+        let blacklist = borrow_global<Blacklist>(creator_addr);
+        
+        assert!(nft_exists(creator_addr), 0);
+        assert!(blacklist.owner == creator_addr, 1);
+    }
+
+    #[test(dao = @0x1, creator = @0x123)]
+    #[expected_failure(abort_code = ENFT_ALREADY_EXISTS)]
+    fun test_create_nft_twice_fails(dao: &signer, creator: &signer) acquires BlacklistRegistry {
+        setup_test(dao, creator);
+        
+        create_blacklist(dao, creator);
+        create_blacklist(dao, creator); // This should fail since NFT already exists
+    }
+
+    #[test_only]
+    public fun init_module_for_test(dao: &signer) {
         timestamp::set_time_has_started_for_testing(dao);
         init_module(dao);
     }
 
-    #[test(dao = @0x1, creator = @0x123)]
-    fun test_create_nft_success(dao: &signer, creator: &signer) acquires BlacklistRegistry {
-        setup_test(dao, creator);
-        
-        create_blacklist_nft(creator);
-        
-        // assert!(nft_exists(), 0);
-        // assert!(get_owner() == signer::address_of(creator), 1);
-    }
-
-    // #[test(dao = @guaritos, creator = @0x123)]
-    // #[expected_failure(abort_code = ENFT_ALREADY_EXISTS)]
-    // fun test_create_nft_twice_fails(dao: &signer, creator: &signer) acquires BlacklistRegistry {
-    //     setup_test(dao, creator);
-        
-    //     create_blacklist_nft(creator);
-    //     create_blacklist_nft(creator); // Should fail
-    // }
-
     // #[test(dao = @guaritos, creator = @0x123)]
     // fun test_blacklist_operations(dao: &signer, creator: &signer) acquires BlacklistRegistry {
     //     setup_test(dao, creator);
-    //     create_blacklist_nft(creator);
+    //     create_blacklist(dao, creator);
         
     //     let address_to_blacklist = @0x456;
         

@@ -34,15 +34,17 @@ module guaritos::nft_dao {
     use aptos_token::property_map::PropertyMap;
     use aptos_token::property_map;
     use aptos_token::token::{Self, TokenId, create_token_id_raw};
-    use guaritos::bucket_table::BucketTable;
-    use guaritos::bucket_table;
-    use guaritos::nft_dao_events::{Self, emit_create_dao_event};
     use std::bcs;
+    use std::debug;
     use std::error;
     use std::option::{Self, Option};
     use std::signer;
     use std::string::{Self, String};
     use std::vector;
+    use guaritos::bucket_table::BucketTable;
+    use guaritos::bucket_table;
+    use guaritos::nft_dao_events::{Self, emit_create_dao_event};
+    use guaritos::nft_blacklist::{Self, Blacklist, BlacklistRegistry, nft_exists};
 
     /// This account doesn't have enough voting power
     const EVOTING_POWER_NOT_ENOUGH: u64 = 1;
@@ -702,7 +704,7 @@ module guaritos::nft_dao {
     }
 
     /// Internal function for executing a DAO's proposal
-    fun execute_proposal(proposal: &Proposal, dao: &DAO){
+    fun execute_proposal(proposal: &Proposal, dao: &DAO) {
         vector::enumerate_ref(&proposal.function_names, |i, function_name| {
             let args = vector::borrow(&proposal.function_args, i);
             if (function_name == &string::utf8(b"transfer_fund")) {
@@ -718,6 +720,14 @@ module guaritos::nft_dao {
                 let property_version = property_map::read_u64(args, &string::utf8(b"property_version"));
                 let dst = property_map::read_address(args, &string::utf8(b"dst"));
                 offer_nft(&res_signer, creator, collection, token_name, property_version, dst);
+            } else if (function_name == &string::utf8(FUNCTION_ADD_TO_BLACKLIST)) {
+                let res_signer = create_signer_with_capability(&dao.dao_signer_capability);
+                let dst = property_map::read_address(args, &string::utf8(b"dst"));
+                nft_blacklist::add_to_blacklist(&res_signer, dst);
+            } else if (function_name == &string::utf8(b"remove_from_blacklist")) {
+                let res_signer = create_signer_with_capability(&dao.dao_signer_capability);
+                let dst = property_map::read_address(args, &string::utf8(b"dst"));
+                nft_blacklist::remove_from_blacklist(&res_signer, dst);
             } else {
                 assert!(function_name == &string::utf8(b"no_op"), error::invalid_argument(ENOT_SUPPROTED_FUNCTION));
             };
@@ -799,6 +809,12 @@ module guaritos::nft_dao {
             property_map::read_string(map, &string::utf8(b"token_name"));
             property_map::read_u64(map, &string::utf8(b"property_version"));
             property_map::read_address(map, &string::utf8(b"dst"));
+        } else if (function_name == string::utf8(b"add_to_blacklist")) {
+            assert!(property_map::length(map) == 1, error::invalid_argument(ENOT_SUPPROTED_FUNCTION));
+            property_map::read_address(map, &string::utf8(b"dst"));
+        } else if (function_name == string::utf8(b"remove_from_blacklist")) {
+            assert!(property_map::length(map) == 1, error::invalid_argument(ENOT_SUPPROTED_FUNCTION));
+            property_map::read_address(map, &string::utf8(b"dst"));
         } else {
             abort error::invalid_argument(ENOT_SUPPROTED_FUNCTION)
         }
@@ -873,32 +889,43 @@ module guaritos::nft_dao {
         token::direct_transfer(creator, voter, token_id_3, 1);
     }
 
-    #[test(aptos_framework = @0x1, creator = @0xdeaf, voter = @0xaf)]
-    public fun test_e2e_scenario(aptos_framework: &signer, creator: &signer, voter: &signer) acquires DAO, Proposals, ProposalVotingStatistics {
+    #[test(aptos_framework = @0x1, creator = @0xdeaf, voter = @0xaf, target = @0xabc)]
+    public fun test_e2e_scenario(aptos_framework: &signer, creator: &signer, voter: &signer, target: &signer) acquires DAO, Proposals, ProposalVotingStatistics {
         timestamp::set_time_has_started_for_testing(aptos_framework);
+
         account::create_account_for_test(@0x1);
         account::create_account_for_test(@0xdeaf);
         account::create_account_for_test(@0xaf);
+        account::create_account_for_test(@0xabc);
 
         // intialize with some fund in the DAO resource account
         let (burn_cap, mint_cap) = aptos_coin::initialize_for_test(aptos_framework);
-
+        
         setup_voting_token_distribution(creator, voter);
+
+        let dao_voting_duration = 1 * 60 * 60;
+        let dao_threshold = 1;
         // creator creates a dao
         let creator_addr = signer::address_of(creator);
         let res_acc = create_dao_and_get_dao_address(
             creator,
             string::utf8(b"my_dao"),
-            1,
-            10,
+            dao_threshold,
+            dao_voting_duration,
             creator_addr,
             string::utf8(b"Hello, World"),
             1,
         );
+        let target_addr = signer::address_of(target);
 
+        let res_signer = create_signer_with_capability(&borrow_global<DAO>(res_acc).dao_signer_capability);
+        nft_blacklist::init_module_for_test(&res_signer);
+        
         //
         // Test no_op proposal
         //
+
+        let no_op_proposal_start_time = timestamp::now_seconds() + 30;
 
         // creator creates a proposal
         create_proposal(
@@ -910,11 +937,11 @@ module guaritos::nft_dao {
             vector<vector<String>>[vector<String>[]],
             vector<vector<vector<u8>>>[vector<vector<u8>>[]],
             vector<vector<String>>[vector<String>[]],
-            1,
+            no_op_proposal_start_time,
             vector<String>[string::utf8(b"Token")],
             vector<u64>[0],
         );
-        timestamp::update_global_time_for_test(2000000);
+        timestamp::update_global_time_for_test_secs(no_op_proposal_start_time + 60);
 
         vote(
             voter,
@@ -924,13 +951,17 @@ module guaritos::nft_dao {
             vector<String>[string::utf8(b"artist2"), string::utf8(b"artist3")],
             vector<u64>[0, 0],
         );
-        timestamp::update_global_time_for_test(20000000);
+
+        timestamp::update_global_time_for_test_secs(no_op_proposal_start_time + dao_voting_duration + 60);
+
         resolve(1, res_acc);
         assert!(get_proposal_resolution(1, res_acc) == PROPOSAL_RESOLVED_PASSED, 1);
 
         //
         // Test transfer fund proposal
         //
+
+        let transfer_fund_proposal_start_time = timestamp::now_seconds() + 60;
 
         let coins = coin::mint(100, &mint_cap);
         coin::register<AptosCoin>(creator);
@@ -952,11 +983,11 @@ module guaritos::nft_dao {
             vector<vector<String>>[vector<String>[string::utf8(b"dst"), string::utf8(b"amount")]],
             vector<vector<vector<u8>>>[vector<vector<u8>>[bcs::to_bytes(&@0xaf), bcs::to_bytes(&(45 as u64))]],
             vector<vector<String>>[vector<String>[string::utf8(b"address"), string::utf8(b"u64")]],
-            21,
+            transfer_fund_proposal_start_time,
             vector<String>[string::utf8(b"Token")],
             vector<u64>[0],
         );
-        timestamp::update_global_time_for_test(22000000);
+        timestamp::update_global_time_for_test_secs(transfer_fund_proposal_start_time + 60);
         vote(
             voter,
             res_acc,
@@ -965,11 +996,44 @@ module guaritos::nft_dao {
             vector<String>[string::utf8(b"artist2"), string::utf8(b"artist3")],
             vector<u64>[0, 0],
         );
-        timestamp::update_global_time_for_test(40000000);
+        timestamp::update_global_time_for_test_secs(transfer_fund_proposal_start_time + dao_voting_duration + 60);
         resolve(2, res_acc);
-        assert!(get_proposal_resolution(1, res_acc) == PROPOSAL_RESOLVED_PASSED, 1);
+        assert!(get_proposal_resolution(2, res_acc) == PROPOSAL_RESOLVED_PASSED, 1);
         // voter gets 45 coin transferred to her account after resolving
         assert!(coin::balance<AptosCoin>(signer::address_of(voter)) == 45, 1);
+
+        // 
+        // Test add_to_blacklist proposal
+        //
+        let add_to_blacklist_proposal_start_time = timestamp::now_seconds() + 60;
+
+        create_proposal(
+            creator,
+            res_acc, // resource account address of the nft dao
+            string::utf8(b"Proposal 3"),
+            string::utf8(b"description"),
+            vector<String>[string::utf8(FUNCTION_ADD_TO_BLACKLIST)],
+            vector<vector<String>>[vector<String>[string::utf8(b"dst")]],
+            vector<vector<vector<u8>>>[vector<vector<u8>>[bcs::to_bytes(&@0xabc)]],
+            vector<vector<String>>[vector<String>[string::utf8(b"address")]],
+            add_to_blacklist_proposal_start_time,
+            vector<String>[string::utf8(b"Token")],
+            vector<u64>[0],
+        );
+        timestamp::update_global_time_for_test_secs(add_to_blacklist_proposal_start_time + 60);
+        vote(
+            voter,
+            res_acc,
+            3,
+            true,
+            vector<String>[string::utf8(b"artist2"), string::utf8(b"artist3")],
+            vector<u64>[0, 0],
+        );
+        timestamp::update_global_time_for_test_secs(add_to_blacklist_proposal_start_time + dao_voting_duration + 60);
+        resolve(3, res_acc);
+        assert!(get_proposal_resolution(3, res_acc) == PROPOSAL_RESOLVED_PASSED, 1);
+        // the target address is added to the blacklist
+        assert!(nft_blacklist::is_blacklisted(res_acc, target_addr), 1);
     }
 
     #[test(aptos_framework = @0x1, admin = @0xdeaf, new_admin = @0xaf)]
@@ -1209,6 +1273,48 @@ module guaritos::nft_dao {
         assert!(get_proposal_resolution(1, res_acc) == PROPOSAL_RESOLVED_BY_ADMIN, 1);
     }
 
+    // #[test(aptos_framework = @0x1, creator = @0xdeaf, voter = @0xaf, target = @0xbad)]
+    // public fun test_admin_execute_proposal_with_add_to_blacklist(aptos_framework: &signer, creator: &signer, voter: &signer, target: &signer)acquires DAO, Proposals, ProposalVotingStatistics {
+    //     timestamp::set_time_has_started_for_testing(aptos_framework);
+    //     account::create_account_for_test(@0x1);
+    //     account::create_account_for_test(@0xdeaf);
+    //     account::create_account_for_test(@0xaf);
+
+    //     setup_voting_token_distribution(creator, voter);
+    //     // creator creates a dao
+    //     let creator_addr = signer::address_of(creator);
+    //     let target_addr = signer::address_of(target);
+    //     let res_acc = create_dao_and_get_dao_address(
+    //         creator,
+    //         string::utf8(b"my_dao"),
+    //         2,
+    //         10,
+    //         creator_addr,
+    //         string::utf8(b"Hello, World"),
+    //         1,
+    //     );
+
+    //     // creator creates a proposal
+    //     create_proposal(
+    //         creator,
+    //         res_acc, // resource account address of the nft dao
+    //         string::utf8(b"Proposal 1"),
+    //         string::utf8(b"description"),
+    //         vector<String>[string::utf8(b"add_to_blacklist")],
+    //         vector<vector<String>>[vector<String>[string::utf8(b"dst")]],
+    //         vector<vector<vector<u8>>>[vector<vector<u8>>[bcs::to_bytes(&target_addr)]],
+    //         vector<vector<String>>[vector<String>[string::utf8(b"address")]],
+    //         1,
+    //         vector<String>[string::utf8(b"Token")],
+    //         vector<u64>[0],
+    //     );
+    //     timestamp::update_global_time_for_test(2000010);
+    //     // admin still can resolve this proposal even when it doesn't have sufficient votes
+    //     admin_resolve(creator,1, res_acc, string::utf8(b""));
+    //     assert!(get_proposal_resolution(1, res_acc) == PROPOSAL_RESOLVED_BY_ADMIN, 1);
+    //     assert!(nft_blacklist::is_blacklisted(res_acc, target_addr), 1);
+    // }
+    
     #[test(aptos_framework = @0x1, creator = @0xdeaf, voter = @0xaf)]
     public fun test_admin_veto_a_proposal(aptos_framework: &signer, creator: &signer, voter: &signer)acquires DAO, Proposals, ProposalVotingStatistics {
         timestamp::set_time_has_started_for_testing(aptos_framework);
