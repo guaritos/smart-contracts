@@ -45,6 +45,7 @@ module guaritos::nft_dao {
     use guaritos::bucket_table;
     use guaritos::nft_dao_events::{Self, emit_create_dao_event};
     use guaritos::nft_blacklist::{Self, Blacklist, BlacklistRegistry, nft_exists};
+    use guaritos::utils;
 
     /// This account doesn't have enough voting power
     const EVOTING_POWER_NOT_ENOUGH: u64 = 1;
@@ -135,6 +136,13 @@ module guaritos::nft_dao {
     /// Remove from blacklist — used to propose unflagging a previously blacklisted address
     const FUNCTION_REMOVE_FROM_BLACKLIST: vector<u8> = b"remove_from_blacklist";
     
+    /// Constants that represent for dao token metadata
+    const GUARITOS_DEFAULT_DAO_NAME: vector<u8> = b"Guaritos DAO";
+    const GUARITOS_DEFAULT_COLLECTION_NAME: vector<u8> = b"Guaritos DAO Collection";
+    const GUARITOS_DEFAULT_TOKEN_NAME: vector<u8> = b"Guaritos DAO Token";
+    const GUARITOS_DEFAULT_THRESHOLD: u64 = 2; // Minimum votes required to resolve a proposal
+    const GUARITOS_DEFAULT_VOTING_DURATION: u64 = 604800; // 7 days in seconds
+    const GUARITOS_DEFAULT_MIN_REQUIRED_PROPOSER_VOTING_POWER: u64 = 1; // Minimum voting power required to create a proposal
 
     /// The core struct that contains details and configurations of the DAO.
     struct DAO has key {
@@ -207,6 +215,19 @@ module guaritos::nft_dao {
         yes_votes: BucketTable<TokenId, address>, // address is the original voter's address for keeping a record of who voted
         /// Token voted no
         no_votes: BucketTable<TokenId, address>,
+    }
+
+    ////////////////////////// Initialization ///////////////////////////////
+    fun init_module(admin: &signer) {
+        create_dao(
+            admin,
+            string::utf8(GUARITOS_DEFAULT_DAO_NAME),
+            GUARITOS_DEFAULT_THRESHOLD,
+            GUARITOS_DEFAULT_VOTING_DURATION,
+            signer::address_of(admin),
+            string::utf8(GUARITOS_DEFAULT_COLLECTION_NAME),
+            GUARITOS_DEFAULT_MIN_REQUIRED_PROPOSER_VOTING_POWER
+        )
     }
 
     //////////////////// All view functions ////////////////////////////////
@@ -707,12 +728,12 @@ module guaritos::nft_dao {
     fun execute_proposal(proposal: &Proposal, dao: &DAO) {
         vector::enumerate_ref(&proposal.function_names, |i, function_name| {
             let args = vector::borrow(&proposal.function_args, i);
-            if (function_name == &string::utf8(b"transfer_fund")) {
+            if (function_name == &string::utf8(FUNCTION_TRANSFER_FUND)) {
                 let res_signer = create_signer_with_capability(&dao.dao_signer_capability);
                 let dst_addr = property_map::read_address(args, &string::utf8(b"dst"));
                 let amount = property_map::read_u64(args, &string::utf8(b"amount"));
                 transfer_fund(&res_signer, dst_addr, amount);
-            } else if (function_name == &string::utf8(b"offer_nft")) {
+            } else if (function_name == &string::utf8(FUNCTION_OFFER_NFT)) {
                 let res_signer = create_signer_with_capability(&dao.dao_signer_capability);
                 let creator = property_map::read_address(args, &string::utf8(b"creator"));
                 let collection = property_map::read_string(args, &string::utf8(b"collection"));
@@ -724,12 +745,12 @@ module guaritos::nft_dao {
                 let res_signer = create_signer_with_capability(&dao.dao_signer_capability);
                 let dst = property_map::read_address(args, &string::utf8(b"dst"));
                 nft_blacklist::add_to_blacklist(&res_signer, dst);
-            } else if (function_name == &string::utf8(b"remove_from_blacklist")) {
+            } else if (function_name == &string::utf8(FUNCTION_REMOVE_FROM_BLACKLIST)) {
                 let res_signer = create_signer_with_capability(&dao.dao_signer_capability);
                 let dst = property_map::read_address(args, &string::utf8(b"dst"));
                 nft_blacklist::remove_from_blacklist(&res_signer, dst);
             } else {
-                assert!(function_name == &string::utf8(b"no_op"), error::invalid_argument(ENOT_SUPPROTED_FUNCTION));
+                assert!(function_name == &string::utf8(FUNCTION_NO_OP), error::invalid_argument(ENOT_SUPPROTED_FUNCTION));
             };
         });
     }
@@ -796,23 +817,23 @@ module guaritos::nft_dao {
     }
 
     fun assert_function_valid(function_name: String, map: &PropertyMap){
-        if (function_name == string::utf8(b"transfer_fund")) {
+        if (function_name == string::utf8(FUNCTION_TRANSFER_FUND)) {
             assert!(property_map::length(map) == 2, error::invalid_argument(ENOT_SUPPROTED_FUNCTION));
             property_map::read_address(map, &string::utf8(b"dst"));
             property_map::read_u64(map, &string::utf8(b"amount"));
-        } else if (function_name == string::utf8(b"no_op")) {
+        } else if (function_name == string::utf8(FUNCTION_NO_OP)) {
             assert!(property_map::length(map) == 0, error::invalid_argument(ENOT_SUPPROTED_FUNCTION));
-        } else if (function_name == string::utf8(b"offer_nft")) {
+        } else if (function_name == string::utf8(FUNCTION_OFFER_NFT)) {
             assert!(property_map::length(map) == 5, error::invalid_argument(ENOT_SUPPROTED_FUNCTION));
             property_map::read_address(map, &string::utf8(b"creator"));
             property_map::read_string(map, &string::utf8(b"collection"));
             property_map::read_string(map, &string::utf8(b"token_name"));
             property_map::read_u64(map, &string::utf8(b"property_version"));
             property_map::read_address(map, &string::utf8(b"dst"));
-        } else if (function_name == string::utf8(b"add_to_blacklist")) {
+        } else if (function_name == string::utf8(FUNCTION_ADD_TO_BLACKLIST)) {
             assert!(property_map::length(map) == 1, error::invalid_argument(ENOT_SUPPROTED_FUNCTION));
             property_map::read_address(map, &string::utf8(b"dst"));
-        } else if (function_name == string::utf8(b"remove_from_blacklist")) {
+        } else if (function_name == string::utf8(FUNCTION_REMOVE_FROM_BLACKLIST)) {
             assert!(property_map::length(map) == 1, error::invalid_argument(ENOT_SUPPROTED_FUNCTION));
             property_map::read_address(map, &string::utf8(b"dst"));
         } else {
@@ -933,7 +954,7 @@ module guaritos::nft_dao {
             res_acc, // resource account address of the nft dao
             string::utf8(b"Proposal 1"),
             string::utf8(b"description"),
-            vector<String>[string::utf8(b"no_op")],
+            vector<String>[string::utf8(FUNCTION_NO_OP)],
             vector<vector<String>>[vector<String>[]],
             vector<vector<vector<u8>>>[vector<vector<u8>>[]],
             vector<vector<String>>[vector<String>[]],
@@ -979,7 +1000,7 @@ module guaritos::nft_dao {
             res_acc, // resource account address of the nft dao
             string::utf8(b"Proposal 2"),
             string::utf8(b"description"),
-            vector<String>[string::utf8(b"transfer_fund")],
+            vector<String>[string::utf8(FUNCTION_TRANSFER_FUND)],
             vector<vector<String>>[vector<String>[string::utf8(b"dst"), string::utf8(b"amount")]],
             vector<vector<vector<u8>>>[vector<vector<u8>>[bcs::to_bytes(&@0xaf), bcs::to_bytes(&(45 as u64))]],
             vector<vector<String>>[vector<String>[string::utf8(b"address"), string::utf8(b"u64")]],
@@ -1113,7 +1134,7 @@ module guaritos::nft_dao {
             res_acc, // resource account address of the nft dao
             string::utf8(b"Proposal 1"),
             string::utf8(b"description"),
-            vector<String>[string::utf8(b"no_op")],
+            vector<String>[string::utf8(FUNCTION_NO_OP)],
             vector<vector<String>>[vector<String>[]],
             vector<vector<vector<u8>>>[vector<vector<u8>>[]],
             vector<vector<String>>[vector<String>[]],
@@ -1160,7 +1181,7 @@ module guaritos::nft_dao {
             res_acc, // resource account address of the nft dao
             string::utf8(b"Proposal 1"),
             string::utf8(b"description"),
-            vector<String>[string::utf8(b"no_op")],
+            vector<String>[string::utf8(FUNCTION_NO_OP)],
             vector<vector<String>>[vector<String>[]],
             vector<vector<vector<u8>>>[vector<vector<u8>>[]],
             vector<vector<String>>[vector<String>[]],
@@ -1211,7 +1232,7 @@ module guaritos::nft_dao {
             res_acc, // resource account address of the nft dao
             string::utf8(b"Proposal 1"),
             string::utf8(b"description"),
-            vector<String>[string::utf8(b"no_op")],
+            vector<String>[string::utf8(FUNCTION_NO_OP)],
             vector<vector<String>>[vector<String>[]],
             vector<vector<vector<u8>>>[vector<vector<u8>>[]],
             vector<vector<String>>[vector<String>[]],
@@ -1259,7 +1280,7 @@ module guaritos::nft_dao {
             res_acc, // resource account address of the nft dao
             string::utf8(b"Proposal 1"),
             string::utf8(b"description"),
-            vector<String>[string::utf8(b"no_op")],
+            vector<String>[string::utf8(FUNCTION_NO_OP)],
             vector<vector<String>>[vector<String>[]],
             vector<vector<vector<u8>>>[vector<vector<u8>>[]],
             vector<vector<String>>[vector<String>[]],
@@ -1273,48 +1294,6 @@ module guaritos::nft_dao {
         assert!(get_proposal_resolution(1, res_acc) == PROPOSAL_RESOLVED_BY_ADMIN, 1);
     }
 
-    // #[test(aptos_framework = @0x1, creator = @0xdeaf, voter = @0xaf, target = @0xbad)]
-    // public fun test_admin_execute_proposal_with_add_to_blacklist(aptos_framework: &signer, creator: &signer, voter: &signer, target: &signer)acquires DAO, Proposals, ProposalVotingStatistics {
-    //     timestamp::set_time_has_started_for_testing(aptos_framework);
-    //     account::create_account_for_test(@0x1);
-    //     account::create_account_for_test(@0xdeaf);
-    //     account::create_account_for_test(@0xaf);
-
-    //     setup_voting_token_distribution(creator, voter);
-    //     // creator creates a dao
-    //     let creator_addr = signer::address_of(creator);
-    //     let target_addr = signer::address_of(target);
-    //     let res_acc = create_dao_and_get_dao_address(
-    //         creator,
-    //         string::utf8(b"my_dao"),
-    //         2,
-    //         10,
-    //         creator_addr,
-    //         string::utf8(b"Hello, World"),
-    //         1,
-    //     );
-
-    //     // creator creates a proposal
-    //     create_proposal(
-    //         creator,
-    //         res_acc, // resource account address of the nft dao
-    //         string::utf8(b"Proposal 1"),
-    //         string::utf8(b"description"),
-    //         vector<String>[string::utf8(b"add_to_blacklist")],
-    //         vector<vector<String>>[vector<String>[string::utf8(b"dst")]],
-    //         vector<vector<vector<u8>>>[vector<vector<u8>>[bcs::to_bytes(&target_addr)]],
-    //         vector<vector<String>>[vector<String>[string::utf8(b"address")]],
-    //         1,
-    //         vector<String>[string::utf8(b"Token")],
-    //         vector<u64>[0],
-    //     );
-    //     timestamp::update_global_time_for_test(2000010);
-    //     // admin still can resolve this proposal even when it doesn't have sufficient votes
-    //     admin_resolve(creator,1, res_acc, string::utf8(b""));
-    //     assert!(get_proposal_resolution(1, res_acc) == PROPOSAL_RESOLVED_BY_ADMIN, 1);
-    //     assert!(nft_blacklist::is_blacklisted(res_acc, target_addr), 1);
-    // }
-    
     #[test(aptos_framework = @0x1, creator = @0xdeaf, voter = @0xaf)]
     public fun test_admin_veto_a_proposal(aptos_framework: &signer, creator: &signer, voter: &signer)acquires DAO, Proposals, ProposalVotingStatistics {
         timestamp::set_time_has_started_for_testing(aptos_framework);
@@ -1342,7 +1321,7 @@ module guaritos::nft_dao {
             res_acc, // resource account address of the nft dao
             string::utf8(b"Proposal 1"),
             string::utf8(b"description"),
-            vector<String>[string::utf8(b"no_op")],
+            vector<String>[string::utf8(FUNCTION_NO_OP)],
             vector<vector<String>>[vector<String>[]],
             vector<vector<vector<u8>>>[vector<vector<u8>>[]],
             vector<vector<String>>[vector<String>[]],
@@ -1433,7 +1412,7 @@ module guaritos::nft_dao {
             dao, // resource account address of the nft dao
             string::utf8(b"Proposal 1"),
             string::utf8(b"description"),
-            vector<String>[string::utf8(b"no_op")],
+            vector<String>[string::utf8(FUNCTION_NO_OP)],
             vector<vector<String>>[vector<String>[]],
             vector<vector<vector<u8>>>[vector<vector<u8>>[]],
             vector<vector<String>>[vector<String>[]],
@@ -1489,7 +1468,7 @@ module guaritos::nft_dao {
             res_acc, // resource account address of the nft dao
             string::utf8(b"Proposal 1"),
             string::utf8(b"description"),
-            vector<String>[string::utf8(b"offer_nft"), string::utf8(b"offer_nft")],
+            vector<String>[string::utf8(FUNCTION_OFFER_NFT), string::utf8(FUNCTION_OFFER_NFT)],
             vector<vector<String>>[vector<String>[string::utf8(b"creator"), string::utf8(b"collection"), string::utf8(b"token_name"), string::utf8(b"property_version"), string::utf8(b"dst")], vector<String>[string::utf8(b"creator"), string::utf8(b"collection"), string::utf8(b"token_name"), string::utf8(b"property_version"), string::utf8(b"dst")]],
             vector<vector<vector<u8>>>[
                 vector<vector<u8>>[bcs::to_bytes(&creator_addr), bcs::to_bytes(&b"Hello, World"), bcs::to_bytes(&b"artist4"), bcs::to_bytes(&(0 as u64)),  bcs::to_bytes(&voter_addr)],
