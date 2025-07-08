@@ -19,7 +19,9 @@ module guaritos::nft_blacklist {
     use std::option::{Self, Option};
     use std::object::{Self, address_from_constructor_ref, generate_transfer_ref, generate_linear_transfer_ref, transfer_with_ref};
     use std::vector;
+    use guaritos::constants;
     use guaritos::nft_blacklist_events;
+    use guaritos::utils;
 
     /// Error when NFT already exists
     const ENFT_ALREADY_EXISTS: u64 = 1;
@@ -36,31 +38,9 @@ module guaritos::nft_blacklist {
     /// Error when address is not blacklisted
     const EADDRESS_NOT_BLACKLISTED: u64 = 5;
 
-    /// Collection name for NFT Blacklist
-    const COLLECTION_NAME: vector<u8> = b"Guaritos Blacklist Collection";
-    const COLLECTION_DESCRIPTION: vector<u8> = b"Unique NFT for DAO blacklist management";
-    const TOKEN_NAME: vector<u8> = b"Blacklist Authority";
-    const TOKEN_DESCRIPTION: vector<u8> = b"Authority token for managing DAO blacklist";
-
-    /// Metadata constants for the default NFT Blacklist collection managed by the DAO
-    const DAO_TOKEN_NAME: vector<u8> = b"Guaritos Blacklist";
-    const DAO_TOKEN_DESCRIPTION: vector<u8> = b"Unique NFT collection for Guaritos DAO blacklist management";
-
     /// Resource account seed for creating the blacklist registry
     const RESOURCE_ACCOUNT_SEED: vector<u8> = b"nft_blacklist_seed";
 
-    /// Base URI for the collection
-    const BASE_URI: vector<u8> = b"https://guaritos.vercel.app";
-
-    /// NFT URI for individual tokens
-    const NFT_URI: vector<u8> = b"https://guaritos.vercel.app/blacklist-nft";
-
-    /// Initial count value
-    const INITIAL_COUNT: u64 = 0;
-
-    /// Count increment value
-    const COUNT_INCREMENT: u64 = 1;
-    
     /// Struct for storing NFT Blacklist information
     struct Blacklist has key {
         /// Address that owns the NFT
@@ -81,71 +61,15 @@ module guaritos::nft_blacklist {
         count: u64,
     }
 
-    /// Initialize module (only called once)
-    fun init_module(dao: &signer) {
+    /// Create blacklist registry
+    public entry fun create_blacklist_registry(dao: &signer) {
         let (resource_signer, signer_cap) = create_resource_account(dao, RESOURCE_ACCOUNT_SEED);
         
-        let registry = BlacklistRegistry {
+        move_to(dao, BlacklistRegistry {
             signer_cap,
-            collection_created: true,
-            count: INITIAL_COUNT,
-        };
-
-        let dao_blacklist_collection_constructor_ref = create_unlimited_collection(
-            &resource_signer,
-            string::utf8(COLLECTION_DESCRIPTION),
-            string::utf8(COLLECTION_NAME),
-            option::none(),
-            string::utf8(BASE_URI)
-        );
-
-        let dao_blacklist_collection_address = address_from_constructor_ref(&dao_blacklist_collection_constructor_ref);
-        
-        let transfer_ref = generate_transfer_ref(&dao_blacklist_collection_constructor_ref);
-        let linear_transfer_ref = generate_linear_transfer_ref(&transfer_ref);
-        transfer_with_ref(linear_transfer_ref, signer::address_of(dao));
-
-        // Create first Blacklist NFT for the DAO
-        let dao_blacklist_constructor_ref = create_named_token(
-            &resource_signer,
-            string::utf8(COLLECTION_NAME),
-            string::utf8(DAO_TOKEN_DESCRIPTION),
-            string::utf8(DAO_TOKEN_NAME),
-            option::none(),
-            string::utf8(NFT_URI)
-        );
-
-        let token_address = address_from_constructor_ref(&dao_blacklist_constructor_ref);
-        let transfer_ref = generate_transfer_ref(&dao_blacklist_constructor_ref);
-        let linear_transfer_ref = generate_linear_transfer_ref(&transfer_ref);
-        transfer_with_ref(linear_transfer_ref, signer::address_of(dao));
-
-        registry.count = registry.count + COUNT_INCREMENT;
-        
-        move_to(dao, Blacklist {
-            owner: signer::address_of(dao),
-            addresses: table::new<address, bool>(),
-            token_address,
+            collection_created: false,
+            count: constants::get_default_nft_blacklist_initial_count(),
         });
-
-        move_to(dao, registry);
-    }
-
-    /// Create the shared collection (can be called by anyone, but only once)
-    fun ensure_collection_exists(registry: &mut BlacklistRegistry) {
-        if (!registry.collection_created) {
-            let resource_signer = create_signer_with_capability(&registry.signer_cap);
-            
-            create_unlimited_collection(
-                &resource_signer,
-                string::utf8(COLLECTION_DESCRIPTION),
-                string::utf8(COLLECTION_NAME),
-                option::none(),
-                string::utf8(BASE_URI)
-            );
-
-            registry.collection_created = true;
-        }
     }
 
     /// Create unique NFT Blacklist for the caller
@@ -155,21 +79,18 @@ module guaritos::nft_blacklist {
         assert!(!exists<Blacklist>(creator_addr), ENFT_ALREADY_EXISTS);
         
         let registry = borrow_global_mut<BlacklistRegistry>(dao_addr);
-        ensure_collection_exists(registry);
+
         
         let resource_signer = create_signer_with_capability(&registry.signer_cap);
-        let count_after_creation = registry.count + COUNT_INCREMENT;
-        let name = string::utf8(TOKEN_NAME);
-        name.append(string::utf8(b" #"));
-        name.append(string_utils::to_string<u64>(&count_after_creation));
+        let count_after_creation = registry.count + constants::get_default_nft_blacklist_count_increment();
 
         let token_constructor_ref = create_named_token(
             &resource_signer,
-            string::utf8(COLLECTION_NAME),
-            string::utf8(TOKEN_DESCRIPTION),
-            name,
+            constants::get_default_nft_blacklist_collection_name(),
+            constants::get_default_nft_blacklist_collection_description(),
+            utils::create_token_name_with_id(constants::get_default_nft_blacklist_token_name(), count_after_creation),
             option::none(),
-            string::utf8(NFT_URI)
+            constants::get_default_nft_uri()
         );
 
         let token_address = address_from_constructor_ref(&token_constructor_ref);
@@ -256,13 +177,53 @@ module guaritos::nft_blacklist {
     #[test_only]
     fun setup_test(dao: &signer, creator: &signer) acquires BlacklistRegistry {
         timestamp::set_time_has_started_for_testing(dao);
-        init_module(dao);
+
+        // Initialize the module for testing
+
+        let (resource_signer, signer_cap) = create_resource_account(dao, RESOURCE_ACCOUNT_SEED);
+        let registry = BlacklistRegistry {
+            signer_cap,
+            collection_created: false,
+            count: constants::get_default_nft_blacklist_initial_count(),
+        };
+        let dao_blacklist_collection_constructor_ref = create_unlimited_collection(
+            &resource_signer,
+            constants::get_default_nft_blacklist_collection_description(),
+            constants::get_default_nft_blacklist_collection_name(),
+            option::none(),
+            constants::get_default_base_uri()
+        );
+        let dao_blacklist_collection_address = address_from_constructor_ref(&dao_blacklist_collection_constructor_ref);
+        let transfer_ref = generate_transfer_ref(&dao_blacklist_collection_constructor_ref);
+        let linear_transfer_ref = generate_linear_transfer_ref(&transfer_ref);
+        transfer_with_ref(linear_transfer_ref, signer::address_of(dao));
+
+        let dao_blacklist_constructor_ref = create_named_token(
+            &resource_signer,
+            constants::get_default_nft_blacklist_collection_name(),
+            constants::get_default_nft_blacklist_collection_description(),
+            constants::get_default_nft_blacklist_token_name(),
+            option::none(),
+            constants::get_default_nft_uri()
+        );
+        let token_address = address_from_constructor_ref(&dao_blacklist_constructor_ref);
+        let transfer_ref = generate_transfer_ref(&dao_blacklist_constructor_ref);
+        let linear_transfer_ref = generate_linear_transfer_ref(&transfer_ref);
+        transfer_with_ref(linear_transfer_ref, signer::address_of(dao));
+
+        registry.count = registry.count + constants::get_default_nft_blacklist_count_increment();
+        move_to(dao, Blacklist {
+            owner: signer::address_of(dao),
+            addresses: table::new<address, bool>(),
+            token_address,
+        });
+        move_to(dao, registry);
         
         let creator_addr = signer::address_of(creator);
-        assert!(!exists<Blacklist>(creator_addr), INITIAL_COUNT);
-        assert!(!nft_exists(creator_addr), COUNT_INCREMENT);
-        assert!(exists<BlacklistRegistry>(signer::address_of(dao)), 2);
-        assert!(borrow_global<BlacklistRegistry>(signer::address_of(dao)).count == COUNT_INCREMENT, 3);
+        assert!(!exists<Blacklist>(creator_addr), 1);
+        assert!(!nft_exists(creator_addr), 2);
+        assert!(exists<BlacklistRegistry>(signer::address_of(dao)), 3);
+        assert!(borrow_global<BlacklistRegistry>(signer::address_of(dao)).count == constants::get_default_nft_blacklist_count_increment(), 4);
     }
 
     #[test(dao = @0x1, creator = @0x123)]
@@ -276,8 +237,8 @@ module guaritos::nft_blacklist {
         
         let blacklist = borrow_global<Blacklist>(creator_addr);
         
-        assert!(nft_exists(creator_addr), INITIAL_COUNT);
-        assert!(blacklist.owner == creator_addr, COUNT_INCREMENT);
+        assert!(nft_exists(creator_addr), constants::get_default_nft_blacklist_initial_count());
+        assert!(blacklist.owner == creator_addr, constants::get_default_nft_blacklist_count_increment());
     }
 
     #[test(dao = @0x1, creator = @0x123)]
@@ -294,7 +255,46 @@ module guaritos::nft_blacklist {
     #[test_only]
     public fun init_module_for_test(dao: &signer) {
         timestamp::set_time_has_started_for_testing(dao);
-        init_module(dao);
+
+        let (resource_signer, signer_cap) = create_resource_account(dao, RESOURCE_ACCOUNT_SEED);
+        let registry = BlacklistRegistry {
+            signer_cap,
+            collection_created: true,
+            count: constants::get_default_nft_blacklist_initial_count(),
+        };
+        let dao_blacklist_collection_constructor_ref = create_unlimited_collection(
+            &resource_signer,
+            constants::get_default_nft_blacklist_collection_description(),
+            constants::get_default_nft_blacklist_collection_name(),
+            option::none(),
+            constants::get_default_base_uri()
+        );
+        
+        let dao_blacklist_collection_address = address_from_constructor_ref(&dao_blacklist_collection_constructor_ref);
+        let transfer_ref = generate_transfer_ref(&dao_blacklist_collection_constructor_ref);
+        let linear_transfer_ref = generate_linear_transfer_ref(&transfer_ref);
+        transfer_with_ref(linear_transfer_ref, signer::address_of(dao));    
+
+        let dao_blacklist_constructor_ref = create_named_token(
+            &resource_signer,
+            constants::get_default_nft_blacklist_collection_name(),
+            constants::get_default_nft_blacklist_collection_description(),
+            constants::get_default_nft_blacklist_token_name(),
+            option::none(),
+            constants::get_default_nft_uri()
+        );
+        let token_address = address_from_constructor_ref(&dao_blacklist_constructor_ref);
+        let transfer_ref = generate_transfer_ref(&dao_blacklist_constructor_ref);
+        let linear_transfer_ref = generate_linear_transfer_ref(&transfer_ref);
+        transfer_with_ref(linear_transfer_ref, signer::address_of(dao));
+
+        registry.count = registry.count + constants::get_default_nft_blacklist_count_increment();
+        move_to(dao, Blacklist {
+            owner: signer::address_of(dao),
+            addresses: table::new<address, bool>(),
+            token_address,
+        });
+        move_to(dao, registry);
     }
 
     #[test(dao = @0x1, creator = @0x123, target = @0x456)]

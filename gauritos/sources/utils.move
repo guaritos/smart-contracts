@@ -6,7 +6,7 @@ module guaritos::utils {
     use aptos_framework::string_utils;
     
     /// Creates a formatted token name by appending the token name and its ID.
-    public(friend) fun create_token_name_with_id (
+    public fun create_token_name_with_id (
         token_name: String,
         id: u64,
     ) : String {
