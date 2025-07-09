@@ -21,11 +21,10 @@ module guaritos::nft_blacklist {
     const EREGISTRY_NOT_EXISTS: u64 = 6;
     const EBLACKLIST_COLLECTION_NOT_CREATED: u64 = 7;
     const EBLACKLIST_ALREADY_EXISTS: u64 = 8;
+    const EREGISTRY_ALREADY_INITIALIZED: u64 = 9;
 
     const RESOURCE_ACCOUNT_SEED: vector<u8> = b"nft_blacklist_seed";
 
-    struct InitFlag has key {}
-    
     /// Individual blacklist NFT data
     struct Blacklist has key {
         owner: address,
@@ -33,30 +32,24 @@ module guaritos::nft_blacklist {
         token_address: address,
     }
 
-    /// Global registry for managing shared collection
+    /// Global registry for managing shared collection - stored at module address
     struct BlacklistRegistry has key {
+        resource_account_address: address,
         signer_cap: SignerCapability,
         collection_created: bool,
         count: u64,
     }
 
+    /// Initialize module - creates the global registry
     fun init_module(admin: &signer) {
         let admin_addr = signer::address_of(admin);
-        assert!(!exists<InitFlag>(admin_addr), ENFT_ALREADY_EXISTS);
+        assert!(!exists<BlacklistRegistry>(admin_addr), EREGISTRY_ALREADY_INITIALIZED);
         
-        move_to(admin, InitFlag {});
-        
-        let (res_signer, _) = create_resource_account(admin, RESOURCE_ACCOUNT_SEED);
+        // Create resource account for managing collection
+        let (res_signer, res_cap) = create_resource_account(admin, RESOURCE_ACCOUNT_SEED);
+        let res_addr = signer::address_of(&res_signer);
 
-        create_blacklist_registry(&res_signer);
-    }
-
-    public entry fun create_blacklist_registry(creator: &signer) {
-        let creator_addr = signer::address_of(creator);
-        assert!(!exists<BlacklistRegistry>(creator_addr), ENFT_ALREADY_EXISTS);
-        
-        let (res_signer, res_cap) = create_resource_account(creator, RESOURCE_ACCOUNT_SEED);
-        
+        // Create the collection
         create_unlimited_collection(
             &res_signer,
             constants::get_default_nft_blacklist_collection_description(),
@@ -65,17 +58,26 @@ module guaritos::nft_blacklist {
             constants::get_default_base_uri()
         );
 
-        move_to(creator, BlacklistRegistry {
+        // Store registry at module address (admin's address)
+        move_to(admin, BlacklistRegistry {
+            resource_account_address: res_addr,
             signer_cap: res_cap,
             collection_created: true,
             count: constants::get_default_nft_blacklist_initial_count(),
         });
     }
 
+    /// Get the global registry address (module address)
+    public fun get_registry_address(): address {
+        @guaritos
+    }
+
     /// Create blacklist NFT for caller
-    public entry fun create_blacklist(creator: &signer, registry_addr: address) acquires BlacklistRegistry {
+    public entry fun create_blacklist(creator: &signer) acquires BlacklistRegistry {
         let creator_addr = signer::address_of(creator);
         assert!(!exists<Blacklist>(creator_addr), ENFT_ALREADY_EXISTS);
+        
+        let registry_addr = get_registry_address();
         assert!(exists<BlacklistRegistry>(registry_addr), EREGISTRY_NOT_EXISTS);
         
         let registry = borrow_global_mut<BlacklistRegistry>(registry_addr);
@@ -173,84 +175,99 @@ module guaritos::nft_blacklist {
         borrow_global<Blacklist>(owner).token_address
     }
 
+    #[view]
+    /// Get resource account address
+    public fun get_resource_account_address(): address acquires BlacklistRegistry {
+        let registry_addr = get_registry_address();
+        assert!(exists<BlacklistRegistry>(registry_addr), EREGISTRY_NOT_EXISTS);
+        borrow_global<BlacklistRegistry>(registry_addr).resource_account_address
+    }
+
     #[test_only]
     use aptos_framework::timestamp;
 
     #[test_only]
-    fun setup_test(registry: &signer, creator: &signer) {
-        timestamp::set_time_has_started_for_testing(registry);
-        create_blacklist_registry(registry);
+    /// Setup test environment with proper framework initialization
+    fun setup_test(aptos_framework: &signer, admin: &signer) {
+        // Initialize timestamp with aptos framework signer
+        timestamp::set_time_has_started_for_testing(aptos_framework);
         
-        let creator_addr = signer::address_of(creator);
-        assert!(!exists<Blacklist>(creator_addr), 1);
-        assert!(!nft_exists(creator_addr), 2);
-        assert!(exists<BlacklistRegistry>(signer::address_of(registry)), 3);
-    }
-
-    #[test_only]
-    public fun init_module_for_test(admin: &signer) {
-        timestamp::set_time_has_started_for_testing(admin);
+        // Initialize the module with admin
         init_module(admin);
     }
 
-    #[test(registry = @0x1, creator = @0x123)]
-    fun test_create_nft_success(registry: &signer, creator: &signer) acquires BlacklistRegistry, Blacklist {
-        let creator_addr = signer::address_of(creator);
-        let registry_addr = signer::address_of(registry);
+    #[test_only]
+    public fun init_module_for_test(aptos_framework: &signer, admin: &signer) {
+        timestamp::set_time_has_started_for_testing(aptos_framework);
+        init_module(admin);
+    }
 
-        setup_test(registry, creator);
-        create_blacklist(creator, registry_addr);
+    #[test(aptos_framework = @0x1, admin = @guaritos, creator = @0x123)]
+    fun test_create_nft_success(aptos_framework: &signer, admin: &signer, creator: &signer) acquires BlacklistRegistry, Blacklist {
+        let creator_addr = signer::address_of(creator);
+        setup_test(aptos_framework, admin);
+
+        create_blacklist(creator);
         
         let blacklist = borrow_global<Blacklist>(creator_addr);
         assert!(nft_exists(creator_addr), 1);
         assert!(blacklist.owner == creator_addr, 2);
     }
 
-    #[test(registry = @0x1, creator = @0x123)]
+    #[test(aptos_framework = @0x1, admin = @guaritos, creator = @0x123)]
     #[expected_failure(abort_code = ENFT_ALREADY_EXISTS)]
-    fun test_create_nft_twice_fails(registry: &signer, creator: &signer) acquires BlacklistRegistry {
-        let registry_addr = signer::address_of(registry);
-        setup_test(registry, creator);
-        create_blacklist(creator, registry_addr);
-        create_blacklist(creator, registry_addr);
+    fun test_create_nft_twice_fails(aptos_framework: &signer, admin: &signer, creator: &signer) acquires BlacklistRegistry {
+        setup_test(aptos_framework, admin);
+        create_blacklist(creator);
+        create_blacklist(creator);
     }
 
-    #[test(registry = @0x1, creator = @0x123)]
-    fun test_add_to_blacklist(registry: &signer, creator: &signer) acquires Blacklist, BlacklistRegistry {
+    #[test(aptos_framework = @0x1, admin = @guaritos, creator = @0x123)]
+    fun test_add_to_blacklist(aptos_framework: &signer, admin: &signer, creator: &signer) acquires Blacklist, BlacklistRegistry {
         let creator_addr = signer::address_of(creator);
-        let registry_addr = signer::address_of(registry);
         let target_addr = @0x456;
+        setup_test(aptos_framework, admin);
 
-        setup_test(registry, creator);
-        create_blacklist(creator, registry_addr);
+        create_blacklist(creator);
         add_to_blacklist(creator, target_addr);
 
         assert!(is_blacklisted(creator_addr, target_addr), 1);
     }
 
-    #[test(registry = @0x1, creator = @0x123)]
-    fun test_remove_from_blacklist(registry: &signer, creator: &signer) acquires Blacklist, BlacklistRegistry {
+    #[test(aptos_framework = @0x1, admin = @guaritos, creator = @0x123)]
+    fun test_remove_from_blacklist(aptos_framework: &signer, admin: &signer, creator: &signer) acquires Blacklist, BlacklistRegistry {
         let creator_addr = signer::address_of(creator);
-        let registry_addr = signer::address_of(registry);
         let target_addr = @0x456;
+        setup_test(aptos_framework, admin);
 
-        setup_test(registry, creator);
-        create_blacklist(creator, registry_addr);
+        create_blacklist(creator);
         add_to_blacklist(creator, target_addr);
         remove_from_blacklist(creator, target_addr);
 
         assert!(!is_blacklisted(creator_addr, target_addr), 1);
     }
 
-    #[test(registry = @0x1, creator = @0x123)]
-    fun test_view_functions(registry: &signer, creator: &signer) acquires Blacklist, BlacklistRegistry {
+    #[test(aptos_framework = @0x1, admin = @guaritos, creator = @0x123)]
+    fun test_view_functions(aptos_framework: &signer, admin: &signer, creator: &signer) acquires Blacklist, BlacklistRegistry {
         let creator_addr = signer::address_of(creator);
-        let registry_addr = signer::address_of(registry);
+        setup_test(aptos_framework, admin);
 
-        setup_test(registry, creator);
-        create_blacklist(creator, registry_addr);
+        create_blacklist(creator);
 
         assert!(get_owner(creator_addr) == creator_addr, 1);
         assert!(get_token_address(creator_addr) != @0x0, 2);
+        assert!(get_resource_account_address() != @0x0, 3);
+    }
+
+    #[test(aptos_framework = @0x1, admin = @guaritos, creator = @0x123)]
+    fun test_basic_initialization(aptos_framework: &signer, admin: &signer, creator: &signer) {
+        let creator_addr = signer::address_of(creator);
+        let registry_addr = get_registry_address();
+        
+        setup_test(aptos_framework, admin);
+        
+        assert!(!exists<Blacklist>(creator_addr), 1);
+        assert!(!nft_exists(creator_addr), 2);
+        assert!(exists<BlacklistRegistry>(registry_addr), 3);
     }
 }

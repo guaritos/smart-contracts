@@ -5,9 +5,9 @@ authors = []
 
 [addresses]
 guaritos = "_"
-nft_blacklist_events = "_"
 
 [dev-addresses]
+guaritos = "0x28"
 
 
 [dependencies.AptosFramework]

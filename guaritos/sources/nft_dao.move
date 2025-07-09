@@ -224,8 +224,7 @@ module guaritos::nft_dao {
         let dao = borrow_global<DAO>(dao_addr);
         let dao_signer = create_signer_with_capability(&dao.dao_signer_capability);
 
-        nft_blacklist::create_blacklist_registry(&dao_signer);
-        nft_blacklist::create_blacklist(&dao_signer, dao_addr)
+        nft_blacklist::create_blacklist(&dao_signer)
     }
 
     //////////////////// All view functions ////////////////////////////////
@@ -908,11 +907,12 @@ module guaritos::nft_dao {
         token::direct_transfer(creator, voter, token_id_3, 1);
     }
 
-    #[test(aptos_framework = @0x1, creator = @0xdeaf, voter = @0xaf, target = @0xabc)]
+    #[test(aptos_framework = @0x1, guaritos= @0x28, creator = @0xdeaf, voter = @0xaf, target = @0xabc)]
     public fun test_e2e_scenario(aptos_framework: &signer, creator: &signer, voter: &signer, target: &signer) acquires DAO, Proposals, ProposalVotingStatistics {
         timestamp::set_time_has_started_for_testing(aptos_framework);
 
         account::create_account_for_test(@0x1);
+        account::create_account_for_test(@0x28);
         account::create_account_for_test(@0xdeaf);
         account::create_account_for_test(@0xaf);
         account::create_account_for_test(@0xabc);
@@ -938,7 +938,9 @@ module guaritos::nft_dao {
         let target_addr = signer::address_of(target);
 
         let res_signer = create_signer_with_capability(&borrow_global<DAO>(res_acc).dao_signer_capability);
-        nft_blacklist::init_module_for_test(&res_signer);
+        let guaritos_signer = account::create_signer_for_test(@guaritos);  // Create signer for guaritos
+        nft_blacklist::init_module_for_test(aptos_framework, &guaritos_signer);
+        nft_blacklist::create_blacklist(&res_signer);
         
         //
         // Test no_op proposal
