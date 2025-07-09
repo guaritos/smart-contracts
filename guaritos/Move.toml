@@ -4,9 +4,11 @@ version = "1.0.0"
 authors = []
 
 [addresses]
-guaritos = "0x28"
+guaritos = "_"
+nft_blacklist_events = "_"
 
 [dev-addresses]
+
 
 [dependencies.AptosFramework]
 git = "https://github.com/aptos-labs/aptos-framework.git"

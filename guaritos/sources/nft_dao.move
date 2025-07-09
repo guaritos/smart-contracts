@@ -34,12 +34,9 @@ module guaritos::nft_dao {
     use aptos_token::property_map::PropertyMap;
     use aptos_token::property_map;
     use aptos_token::token::{Self, TokenId, create_token_id_raw};
-    use aptos_token_objects::collection::{create_unlimited_collection};
     use std::bcs;
-    use std::debug;
     use std::error;
     use std::option::{Self, Option};
-    use std::object::{Self, address_from_constructor_ref, generate_transfer_ref, generate_linear_transfer_ref, transfer_with_ref};
     use std::signer;
     use std::string::{Self, String};
     use std::vector;
@@ -47,8 +44,7 @@ module guaritos::nft_dao {
     use guaritos::bucket_table::BucketTable;
     use guaritos::bucket_table;
     use guaritos::nft_dao_events::{Self, emit_create_dao_event};
-    use guaritos::nft_blacklist::{Self, Blacklist, BlacklistRegistry, nft_exists};
-    use guaritos::utils;
+    use guaritos::nft_blacklist::{Self};
 
     /// This account doesn't have enough voting power
     const EVOTING_POWER_NOT_ENOUGH: u64 = 1;
@@ -226,25 +222,10 @@ module guaritos::nft_dao {
         );
 
         let dao = borrow_global<DAO>(dao_addr);
-
         let dao_signer = create_signer_with_capability(&dao.dao_signer_capability);
 
-        // Create blacklist registry for the DAO
         nft_blacklist::create_blacklist_registry(&dao_signer);
-
-        let dao_blacklist_collection_constructor_ref = create_unlimited_collection(
-            &dao_signer,
-            constants::get_default_nft_blacklist_collection_description(),
-            constants::get_default_nft_blacklist_collection_name(),
-            option::none(),
-            constants::get_default_base_uri(),
-        );
-
-        let dao_blacklist_collection_address = address_from_constructor_ref(&dao_blacklist_collection_constructor_ref);
-        
-        let transfer_ref = generate_transfer_ref(&dao_blacklist_collection_constructor_ref);
-        let linear_transfer_ref = generate_linear_transfer_ref(&transfer_ref);
-        transfer_with_ref(linear_transfer_ref, dao_addr);
+        nft_blacklist::create_blacklist(&dao_signer, dao_addr)
     }
 
     //////////////////// All view functions ////////////////////////////////

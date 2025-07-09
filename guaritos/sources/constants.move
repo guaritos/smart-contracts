@@ -1,6 +1,5 @@
 module guaritos::constants {
     use aptos_framework::string::{Self, String};
-    use aptos_framework::vector;
 
     /// Default dao name for Guaritos DAO
     const GUARITOS_DEFAULT_DAO_NAME: vector<u8> = b"Guaritos DAO";

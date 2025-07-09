@@ -1,6 +1,5 @@
 module guaritos::nft_blacklist_events {
     use aptos_framework::event;
-    use std::signer;
     
     friend guaritos::nft_blacklist;
 

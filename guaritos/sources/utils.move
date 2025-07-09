@@ -2,7 +2,6 @@
 /// to support formatting and string manipulation tasks across the Guaritos framework.
 module guaritos::utils {
     use aptos_framework::string::{Self, String};
-    use aptos_framework::vector;
     use aptos_framework::string_utils;
     
     /// Creates a formatted token name by appending the token name and its ID.
