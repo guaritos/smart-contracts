@@ -1,4 +1,1 @@
-aptos move publish \
-  --override-size-check \
-  --skip-fetch-latest-git-deps \
-  --assume-yes
+aptos move publish --package-dir . --profile default --max-gas 2000000 --assume-yes

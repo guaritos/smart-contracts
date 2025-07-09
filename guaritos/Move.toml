@@ -1,13 +1,13 @@
 [package]
 name = "guaritos"
 version = "1.0.0"
+upgrade_policy = "compatible"
 authors = []
 
 [addresses]
-guaritos = "_"
+guaritos = "0x57c528d90af4255748b37f3730afdda043fad019be735e7d899f5565840e0366"
 
 [dev-addresses]
-guaritos = "0x28"
 
 
 [dependencies.AptosFramework]
