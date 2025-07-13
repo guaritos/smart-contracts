@@ -2,11 +2,11 @@
 /// Each account can create one NFT to manage their blacklist
 module guaritos::nft_blacklist {
     use aptos_framework::account::{SignerCapability, create_resource_account, create_signer_with_capability};
-    use aptos_std::table::{Self, Table};
     use aptos_token_objects::collection::create_unlimited_collection;
     use aptos_token_objects::token::create_named_token;
     use std::signer;
     use std::option;
+    use std::vector;
     use std::object::{address_from_constructor_ref, generate_transfer_ref, generate_linear_transfer_ref, transfer_with_ref};
     use guaritos::constants;
     use guaritos::nft_blacklist_events;
@@ -28,7 +28,7 @@ module guaritos::nft_blacklist {
     /// Individual blacklist NFT data
     struct Blacklist has key {
         owner: address,
-        addresses: Table<address, bool>,
+        addresses: vector<address>,
         token_address: address,
     }
 
@@ -100,7 +100,7 @@ module guaritos::nft_blacklist {
 
         move_to(creator, Blacklist {
             owner: creator_addr,
-            addresses: table::new<address, bool>(),
+            addresses: vector::empty<address>(),
             token_address,
         });
 
@@ -118,9 +118,9 @@ module guaritos::nft_blacklist {
 
         let blacklist = borrow_global_mut<Blacklist>(owner_addr);
         assert!(blacklist.owner == owner_addr, ENO_ACCESS);
-        assert!(!table::contains(&blacklist.addresses, target), EADDRESS_ALREADY_BLACKLISTED);
+        assert!(!vector::contains(&blacklist.addresses, &target), EADDRESS_ALREADY_BLACKLISTED);
         
-        table::add(&mut blacklist.addresses, target, true);
+        vector::push_back(&mut blacklist.addresses, target);
         
         nft_blacklist_events::emit_address_blacklisted_event(
             target,
@@ -136,9 +136,10 @@ module guaritos::nft_blacklist {
         
         let blacklist = borrow_global_mut<Blacklist>(owner_addr);
         assert!(blacklist.owner == owner_addr, ENO_ACCESS);
-        assert!(table::contains(&blacklist.addresses, target), EADDRESS_NOT_BLACKLISTED);
+        assert!(vector::contains(&blacklist.addresses, &target), EADDRESS_NOT_BLACKLISTED);
         
-        table::remove(&mut blacklist.addresses, target);
+        let (_, index) = vector::index_of(&blacklist.addresses, &target);
+        vector::remove(&mut blacklist.addresses, index);
 
         nft_blacklist_events::emit_address_unblacklisted_event(
             target,
@@ -152,7 +153,7 @@ module guaritos::nft_blacklist {
     public fun is_blacklisted(owner: address, address: address): bool acquires Blacklist {
         if (!exists<Blacklist>(owner)) return false;
         let blacklist = borrow_global<Blacklist>(owner);
-        table::contains(&blacklist.addresses, address)
+        vector::contains(&blacklist.addresses, &address)
     }
 
     #[view]
@@ -181,6 +182,74 @@ module guaritos::nft_blacklist {
         let registry_addr = get_registry_address();
         assert!(exists<BlacklistRegistry>(registry_addr), EREGISTRY_NOT_EXISTS);
         borrow_global<BlacklistRegistry>(registry_addr).resource_account_address
+    }
+
+    #[view]
+    /// Get registry count
+    public fun get_registry_count(): u64 acquires BlacklistRegistry {
+        let registry_addr = get_registry_address();
+        assert!(exists<BlacklistRegistry>(registry_addr), EREGISTRY_NOT_EXISTS);
+        borrow_global<BlacklistRegistry>(registry_addr).count
+    }
+
+    #[view]
+    /// Get collection creation status
+    public fun is_collection_created(): bool acquires BlacklistRegistry {
+        let registry_addr = get_registry_address();
+        assert!(exists<BlacklistRegistry>(registry_addr), EREGISTRY_NOT_EXISTS);
+        borrow_global<BlacklistRegistry>(registry_addr).collection_created
+    }
+
+    #[view]
+    /// Unpack blacklist information
+    public fun unpack_blacklist(owner: address): (address, address) acquires Blacklist {
+        assert!(exists<Blacklist>(owner), ENFT_NOT_EXISTS);
+        let blacklist = borrow_global<Blacklist>(owner);
+        (blacklist.owner, blacklist.token_address)
+    }
+
+    #[view]
+    /// Unpack registry information
+    public fun unpack_registry(): (address, bool, u64) acquires BlacklistRegistry {
+        let registry_addr = get_registry_address();
+        assert!(exists<BlacklistRegistry>(registry_addr), EREGISTRY_NOT_EXISTS);
+        let registry = borrow_global<BlacklistRegistry>(registry_addr);
+        (registry.resource_account_address, registry.collection_created, registry.count)
+    }
+
+    #[view]
+    /// Get blacklist details with counts
+    public fun get_blacklist_details(owner: address): (address, vector<address>, address) acquires Blacklist {
+        assert!(exists<Blacklist>(owner), ENFT_NOT_EXISTS);
+        let blacklist = borrow_global<Blacklist>(owner);
+        (
+            blacklist.owner,
+            blacklist.addresses,
+            blacklist.token_address
+        )
+    }
+
+    #[view]
+    /// Get the count of blacklisted addresses
+    public fun get_blacklisted_count(owner: address): u64 acquires Blacklist {
+        assert!(exists<Blacklist>(owner), ENFT_NOT_EXISTS);
+        let blacklist = borrow_global<Blacklist>(owner);
+        vector::length(&blacklist.addresses)
+    }
+
+    #[view]
+    /// Get all blacklisted addresses
+    public fun get_blacklisted_addresses(owner: address): vector<address> acquires Blacklist {
+        assert!(exists<Blacklist>(owner), ENFT_NOT_EXISTS);
+        let blacklist = borrow_global<Blacklist>(owner);
+        blacklist.addresses
+    }
+
+    /// Public function to check blacklist ownership (non-view for flexibility)
+    public fun check_blacklist_ownership(owner: address, caller: address): bool acquires Blacklist {
+        if (!exists<Blacklist>(owner)) return false;
+        let blacklist = borrow_global<Blacklist>(owner);
+        blacklist.owner == caller
     }
 
     #[test_only]
@@ -269,5 +338,45 @@ module guaritos::nft_blacklist {
         assert!(!exists<Blacklist>(creator_addr), 1);
         assert!(!nft_exists(creator_addr), 2);
         assert!(exists<BlacklistRegistry>(registry_addr), 3);
+    }
+
+    #[test(aptos_framework = @0x1, admin = @guaritos, creator = @0x123)]
+    fun test_unpack_and_get_functions(aptos_framework: &signer, admin: &signer, creator: &signer) acquires Blacklist, BlacklistRegistry {
+        let creator_addr = signer::address_of(creator);
+        let target_addr = @0x456;
+        setup_test(aptos_framework, admin);
+
+        // Test registry functions before creating blacklist
+        let (res_addr, collection_created, count) = unpack_registry();
+        assert!(collection_created, 1);
+        assert!(count == constants::get_default_nft_blacklist_initial_count(), 2);
+        assert!(res_addr != @0x0, 3);
+
+        // Create blacklist
+        create_blacklist(creator);
+
+        // Test blacklist unpack functions
+        let (owner, token_addr) = unpack_blacklist(creator_addr);
+        assert!(owner == creator_addr, 4);
+        assert!(token_addr != @0x0, 5);
+
+
+        // Test get blacklist details
+        let (owner2, addresses, token_addr2) = get_blacklist_details(creator_addr);
+        assert!(owner2 == creator_addr, 6);
+        assert!(token_addr2 == token_addr, 7);
+        // Add some addresses and test count
+        add_to_blacklist(creator, target_addr);
+        add_to_blacklist(creator, @0x789);
+        
+        
+        // Test ownership check
+        assert!(check_blacklist_ownership(creator_addr, creator_addr), 10);
+        assert!(!check_blacklist_ownership(creator_addr, @0x999), 11);
+
+        // Test registry functions after creating blacklist
+        let registry_count = get_registry_count();
+        assert!(registry_count > constants::get_default_nft_blacklist_initial_count(), 12);
+        assert!(is_collection_created(), 13);
     }
 }
